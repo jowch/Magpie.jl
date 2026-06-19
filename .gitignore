@@ -1,0 +1,11 @@
+# Julia
+Manifest.toml
+/docs/build/
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+LocalPreferences.toml
+
+# macOS
+.DS_Store

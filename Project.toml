@@ -1,0 +1,4 @@
+name = "AlphaGP"
+uuid = "569c990f-c400-44e6-8235-6e16111749a2"
+version = "0.1.0"
+authors = ["Jonathan Chen <jonathanwchen@pm.me>"]
