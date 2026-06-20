@@ -24,3 +24,13 @@ end
     @test mean(g_inc, Xt) ≈ mean(g_batch, Xt) rtol=1e-9
     @test var(g_inc, Xt)  ≈ var(g_batch, Xt)  rtol=1e-9
 end
+
+@testset "mean_and_var / predmean / predict" begin
+    k = with_lengthscale(SqExponentialKernel(), 0.7)
+    g = AlphaGP.update(ExactGP(k; noise=1e-3), [randn(2) for _ in 1:6], randn(6))
+    u = randn(2)
+    μ, v = mean_and_var(g, [u])
+    @test μ ≈ mean(g, [u]) && v ≈ var(g, [u])
+    @test AlphaGP.predmean(g, u) ≈ mean(g, [u])[1] rtol=1e-12
+    @test AlphaGP.predict(g, [u]) == mean_and_var(g, [u])
+end

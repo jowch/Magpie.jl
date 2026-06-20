@@ -32,6 +32,17 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
 
+function mean_and_var(g::ExactGP, xs::AbstractVector)
+    m = AbstractGPs.mean(g.prior, xs)
+    _hasdata(g) || return (m, AbstractGPs.var(g.prior, xs))
+    Ks = AbstractGPs.cov(g.prior, g.x, xs)                    # computed once
+    return (m .+ Ks' * g.α, AbstractGPs.var(g.prior, xs) .- diag_Xt_invA_X(g.C, Ks))
+end
+predict(g::AbstractGPs.AbstractGP, xs::AbstractVector) = mean_and_var(g, xs)
+predmean(g::ExactGP, u) = _hasdata(g) ?
+    only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
+    only(AbstractGPs.mean(g.prior, [u]))
+
 _jitter(C22::AbstractMatrix; rel=1e-10) = rel * (tr(C22) / size(C22, 1))
 function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
     xnew = collect(X)
