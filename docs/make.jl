@@ -1,0 +1,28 @@
+ENV["GKSwstype"] = "100"  # GR renders headlessly (no display) in CI / doc build
+using Documenter, Literate, Magpie
+
+const EXDIR  = joinpath(@__DIR__, "..", "examples")
+const GENDIR = joinpath(@__DIR__, "src", "generated")
+
+# (title, source-file) — Tasks 2 and 3 append entries here.
+const EXAMPLES = Tuple{String,String}[]
+
+isdir(GENDIR) && rm(GENDIR; recursive=true)
+mkpath(GENDIR)
+for (_, src) in EXAMPLES
+    Literate.markdown(joinpath(EXDIR, src), GENDIR; documenter=true)  # markdown only at v0.1
+end
+
+makedocs(
+    sitename = "Magpie.jl",
+    modules  = [Magpie],
+    authors  = "Jonathan Chen <jonathanwchen@pm.me> and contributors",
+    pages = [
+        "Home" => "index.md",
+        "Examples" => [title => "generated/$(first(splitext(src))).md" for (title, src) in EXAMPLES],
+    ],
+    format = Documenter.HTML(; prettyurls = get(ENV, "CI", "false") == "true"),
+    warnonly = [:missing_docs],
+)
+
+deploydocs(; repo = "github.com/jowch/Magpie.jl.git", push_preview = true)

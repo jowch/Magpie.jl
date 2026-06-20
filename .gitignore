@@ -15,6 +15,7 @@ deps/src/
 # Build artifacts from the Documenter package
 docs/build/
 docs/site/
+docs/src/generated/
 
 # Pkg manifest — not committed for packages
 Manifest*.toml
