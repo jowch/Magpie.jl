@@ -110,13 +110,6 @@ for contributors in [`CLAUDE.md`](CLAUDE.md).
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what's landed.
 
-## The name
-
-A magpie is drawn to the single shiniest, most novel thing in view — which is exactly what
-an acquisition function does: pick the most *informative* next point. The logo shows it
-following Ariadne's thread (guidance through the unknown) beaded with the three
-[Julia](https://julialang.org) colors.
-
 ## License
 
 [MIT](LICENSE).
