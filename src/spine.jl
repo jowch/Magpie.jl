@@ -31,3 +31,14 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
     ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
+
+_jitter(C22::AbstractMatrix; rel=1e-10) = rel * (tr(C22) / size(C22, 1))
+function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
+    xnew = collect(X)
+    C12 = AbstractGPs.cov(g.prior, g.x, xnew)                 # (n × m)
+    C22 = Matrix(Symmetric(AbstractGPs.cov(g.prior, xnew) + g.noise * I))
+    Cext = update_chol(g.C, C12, C22)
+    xall = vcat(g.x, xnew)
+    δall = vcat(g.δ, y .- AbstractGPs.mean(g.prior, xnew))
+    ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise)
+end

@@ -14,3 +14,13 @@ using AlphaGP: ExactGP
     @test var(g, [0.0])[1] ≈ 0.0 atol=1e-8
     @test cov(g, [0.5]) isa AbstractMatrix                    # self-cov method exists
 end
+
+@testset "incremental == batch" begin
+    k = with_lengthscale(SqExponentialKernel(), 0.7); σ² = 1e-3
+    X = [randn(2) for _ in 1:8]; y = randn(8); Xt = [randn(2) for _ in 1:5]
+    g_batch = AlphaGP.update(ExactGP(k; noise=σ²), X, y)
+    g_inc = ExactGP(k; noise=σ²)
+    for i in 1:8; g_inc = AlphaGP.update(g_inc, X[i], y[i]); end
+    @test mean(g_inc, Xt) ≈ mean(g_batch, Xt) rtol=1e-9
+    @test var(g_inc, Xt)  ≈ var(g_batch, Xt)  rtol=1e-9
+end
