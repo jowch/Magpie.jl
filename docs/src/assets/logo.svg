@@ -27,8 +27,8 @@
 
     <!-- head (slightly smaller), connected to the body -->
     <circle cx="149" cy="81" r="13.5" fill="#2a2d43"/>
-    <!-- slim black bill, pointing up-right toward the thread ahead -->
-    <path d="M 159 76 L 181 80 L 159 86 Z" fill="#15151c"/>
+    <!-- slim black bill (light outline so it reads on dark backgrounds too) -->
+    <path d="M 159 76 L 181 80 L 159 86 Z" fill="#15151c" stroke="#8a8a96" stroke-width="1.2" stroke-linejoin="round"/>
     <!-- eye -->
     <circle cx="151" cy="79" r="3" fill="#f4f4f7"/>
     <circle cx="152" cy="79" r="1.5" fill="#15151c"/>
