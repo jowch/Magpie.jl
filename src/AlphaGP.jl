@@ -10,7 +10,7 @@ import StatsBase: mean_and_var
 include("spine.jl"); include("fit.jl"); include("laplace.jl")
 include("acquisitions.jl"); include("maximize.jl"); include("loop.jl")
 
-export ExactGP, update, predmean, predict, nlml
+export GPModel, ExactGP, update, predmean, predict, nlml
 export LaplaceGP
 export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, resample
 export Box, Points, SobolPolish, grid_points, acquire

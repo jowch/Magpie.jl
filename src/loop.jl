@@ -1,5 +1,5 @@
 mutable struct ActiveLearner{A}
-    gp::AbstractGPs.AbstractGP; acq::A
+    gp::GPModel; acq::A
     Xs::Vector{Any}; Ys::Vector{Any}; acq_vals::Vector{Float64}
 end
 ActiveLearner(gp, acq) = ActiveLearner{typeof(acq)}(gp, acq, Any[], Any[], Float64[])

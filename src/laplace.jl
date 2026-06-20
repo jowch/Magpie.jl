@@ -1,4 +1,4 @@
-struct LaplaceGP{Tp,Tx,Ta,TW,TL} <: AbstractGPs.AbstractGP
+struct LaplaceGP{Tp,Tx,Ta,TW,TL} <: GPModel
     prior::Tp; x::Tx; a::Ta; W::TW; L::TL          # a = K⁻¹(f̂−m); W, L = chol(B) from MAP
 end
 LaplaceGP(kernel::Kernel; mean=AbstractGPs.ZeroMean()) =
