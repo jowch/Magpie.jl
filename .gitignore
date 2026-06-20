@@ -9,3 +9,6 @@ LocalPreferences.toml
 
 # macOS
 .DS_Store
+
+# throwaway spikes / prototypes
+/scratch/
