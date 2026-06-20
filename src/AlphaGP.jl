@@ -13,7 +13,7 @@ include("acquisitions.jl"); include("maximize.jl"); include("loop.jl")
 export ExactGP, update, predmean, predict, nlml
 export LaplaceGP
 export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, resample
-export Box, Candidates, SobolPolish, grid_candidates, acquire
+export Box, Points, SobolPolish, grid_points, acquire
 export ActiveLearner, observe!, fit!, run!, posterior_gp, queried_points, all_data
 
 end
