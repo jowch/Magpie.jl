@@ -48,7 +48,7 @@ Locked decisions:
 
 A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
 
-**Spikes resolved** (June 2026, `docs/research/spike-results.md`): (1) GP-in-ODE through-solver diff ✅ works (`GaussAdjoint`+`MooncakeVJP`, outer Mooncake; `MooncakeVJP` is unexported but benchmarked ~6× faster than the `ReverseDiffVJP` fallback; `MooncakeAdjoint` buggy); (3) `update_chol` under Mooncake ✅ works (so reuse it). (2) Mooncake through Laplace ❌ fails (a `@debug`-macro `try/catch`, not the Newton numerics — likely a cheap fix; else the implicit-diff Laplace adjoint), gating binary BALD. Remaining empirical work: GP-UDE cost at scale; a Laplace-fix spike.
+**Spikes resolved** (June 2026, `docs/research/spike-results.md`): (1) GP-in-ODE through-solver diff ✅ works (`GaussAdjoint`+`MooncakeVJP`, outer Mooncake; `MooncakeVJP` is unexported but benchmarked ~6× faster than the `ReverseDiffVJP` fallback; `MooncakeAdjoint` buggy); (3) `update_chol` under Mooncake ✅ works (so reuse it). (2) Laplace under Mooncake ✅ resolved — reusing ApproximateGPs' Laplace fails (a `@debug`-macro `try/catch`), but a clean from-scratch Laplace differentiates under Mooncake (Spike 4), so own a ~20-line Laplace and binary BALD is unblocked; (4) GP-UDE cost ⚠️ measured for the worst case (recompute RHS ~GiB at n≈200; ≈n²/≈linear-in-steps) — use the cached-α/inducing design. Remaining empirical work: cost of the cached/inducing GP-UDE field; multiple shooting.
 
 ### Pedagogical intent
 
