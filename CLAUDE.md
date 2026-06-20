@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-`Magpie.jl` is a Julia package at the **stub stage** — `src/Magpie.jl` is a `greet()` hello-world and nothing has been implemented yet. The real content right now is the thinking, distilled into `docs/research/` (start at `docs/research/README.md`). These are **research notes, not commitments** — no code or architecture has been decided. Read them before writing any non-trivial code; they record not just what to build but why each numerical and autodiff choice was made. `docs/research/critique.md` is the opinionated counterweight (what is worth doing, ranked by payoff) and should be read alongside the synthesis.
+**v0.1 — spine + Capability A implemented and on `main`** (test suite green, 40 tests). What's built:
+
+- **Spine** (`src/spine.jl`, `src/laplace.jl`, `src/fit.jl`): `AbstractGPModel <: AbstractGPs.AbstractGP` is the contract root — it adds `update`/`fit`/`predmean`/`predict` on top of AbstractGPs' `mean`/`var`/`cov`, so anything the active-learning loop and SciML bridge drive subtypes it. `ExactGP` — incremental exact-regression GP (cached `(δ, C::Cholesky, α)`; `update` extends the factor via `AbstractGPs.update_chol`; `nlml` + `fit` with a Mooncake-checked gradient). `LaplaceGP` — binary-classification Laplace (clean unrolled R&W Alg 3.1, caches the MAP dual `a`, Mooncake-clean; re-fits on accumulated data each `update`). All factorizations go through the `_chol` chokepoint.
+- **Capability A** (`src/acquisitions.jl`, `src/maximize.jl`, `src/loop.jl`): acquisitions `Straddle`, `RandStraddle`, `BinaryBALD` (calibrated bits-BALD, verified vs quadrature); `acquire(g, a; over)` over a `Box` or `Points` domain (low-D grid / Sobol-polish); the mutable `ActiveLearner` loop (`observe!`/`fit!`/`acquire`/`run!` + accessors).
+- **Tests** (`test/`): self-consistency invariants, Mooncake-vs-finite-difference AD checks, and two end-to-end exemplars — A1 (Straddle level-set recovery) and A2 (BinaryBALD + LaplaceGP boundary).
+
+**Deferred** (not built): SparseGP/inducing, the decoupled (Matheron) sampler, multi-class BALD, and all of **Capability B (GP-in-SciML bridge)** — the next plan.
+
+The design rationale lives in `docs/research/` (start at `docs/research/README.md`) — research notes recording not just what to build but *why* each numerical and autodiff choice was made; `docs/research/critique.md` is the opinionated counterweight (effort ranked by payoff). Read them before non-trivial changes.
 
 ## Commands
 
@@ -13,20 +21,20 @@ Standard Julia package workflow (no build step, no lint config in repo):
 ```julia
 # from the repo root
 julia --project=.                       # REPL with this package's environment
-] instantiate                           # install deps after Project.toml gains [deps]
-] test                                  # run the test suite (tests/ does not exist yet)
-] add KernelFunctions AbstractGPs       # add a dependency
+] instantiate                           # install deps
+] test                                  # run the full test suite
+] add SomePackage                       # add a dependency
 ```
 
-Run the test suite from the shell, or a single test file directly:
+Run the suite from the shell, or a single test file directly:
 
 ```bash
-julia --project=. -e 'using Pkg; Pkg.test()'
-julia --project=. test/runtests.jl                 # whole suite once test/ exists
-julia --project=. test/test_cholesky.jl            # a single test file
+julia --project=. -e 'using Pkg; Pkg.test()'       # full suite (test/runtests.jl)
+julia --project=. test/test_spine.jl               # a single test file
+julia --project=. test/test_acquisitions.jl        # acquisitions only
 ```
 
-When tests exist, prefer `@testset` blocks in `test/runtests.jl`; run one set by editing `runtests.jl` to `include` only that file, or pass `Pkg.test()` no filter (Julia has no built-in single-`@testset` runner).
+`test/runtests.jl` includes each `test_*.jl` under one top-level `@testset`. To run one set, run its file directly (above) or edit `runtests.jl` to `include` only that file — Julia has no built-in single-`@testset` runner. The AD tests (`test_ad.jl`, and the Mooncake checks in `test_laplace.jl`) precompile Mooncake and take ~30s+ each; the full suite is ~2 min.
 
 ## Intended direction
 
@@ -41,9 +49,9 @@ Locked decisions:
 
 ### Build order
 
-0. **Shared primitives** — the incremental GP state (reuse AbstractGPs' `update_chol`; expose a public "add → update → predict/acquire" contract; state `(X, y, L::LowerTriangular, α)`, `α = K⁻¹y`, mean `kₓ·α`, var `k** − ‖L⁻¹kₓ‖²`) and a native **decoupled (Matheron) sampler** (`DecoupledGPSample` — *not* pure RFF, which suffers variance starvation). Both capabilities depend on these.
-1. **Spine + minimal AL loop** — exact regression + binary Laplace classification; acquisitions **Straddle → Randomized Straddle → binary BALD → multi-class BALD** (`docs/research/acquisition-functions.md`). Owner's primary interest, lowest risk.
-2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, sparse+inducing+decoupled sampling, **multiple shooting**, `GaussAdjoint`+`MooncakeVJP` (outer Mooncake); borrow GPDiffEq's derivative-GP + PULL, rebuild training.
+0. **Shared primitives** — the incremental GP state. ✅ **done**: the `AbstractGPModel` contract + `ExactGP`/`LaplaceGP`, `α = K⁻¹y` cached, `update` via `AbstractGPs.update_chol`. The native **decoupled (Matheron) sampler** is **deferred** — v1 acquisitions are analytic and need no function sample; add it when Thompson sampling or the GP-UDE field first needs a callable draw.
+1. **Spine + minimal AL loop** — exact regression + binary Laplace classification; acquisitions **Straddle → Randomized Straddle → binary BALD**. ✅ **done** (`docs/research/acquisition-functions.md`). Multi-class BALD **deferred** (needs AugmentedGPLikelihoods.jl).
+2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, `GaussAdjoint`+`MooncakeVJP` (outer Mooncake); `SingleShooting` first, with multiple shooting + sparse/inducing + decoupled sampling deferred until forced. ⏳ **next — not started.**
 3. *(Then, only if pulled by use:)* linear-constraint kernels, latent-space embedding for high-D dynamics, more likelihoods.
 
 A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
