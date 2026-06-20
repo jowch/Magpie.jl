@@ -5,6 +5,13 @@ ExactGP(kernel::Kernel; noise::Real=1e-6, mean=AbstractGPs.ZeroMean()) =
     ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise))
 _hasdata(g::ExactGP) = g.C !== nothing
 
+# Central factorization chokepoint. `Symmetric(K)` is AD-neutral under Mooncake
+# (cholesky routes to LAPACK.potrf! regardless of wrapper; #414 is a ChainRules-only
+# bug AbstractGPs already lives with). `check=false` tolerates roundoff-induced
+# tiny-negative pivots when `fit` probes extreme lengthscales under Duals.
+# For an Enzyme/ChainRules backend, re-add Matrix(...) via a per-backend method here.
+_chol(K) = cholesky(Symmetric(K); check=false)
+
 function Statistics.mean(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
     _hasdata(g) ? m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α : m
@@ -27,7 +34,7 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
     xnew = collect(X)
     δnew = y .- AbstractGPs.mean(g.prior, xnew)
     K = AbstractGPs.cov(g.prior, xnew) + g.noise * I
-    C = cholesky(Matrix(Symmetric(K)); check=false)
+    C = _chol(K)
     ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])

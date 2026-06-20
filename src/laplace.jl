@@ -12,7 +12,7 @@ function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector{Bool})
     f = copy(m); local a, W, L
     for _ in 1:30                                   # unrolled, fixed count (Mooncake-clean)
         π_ = _σ.(f); W = π_ .* (1 .- π_); sW = sqrt.(W)
-        L = cholesky(Symmetric(I + (sW * sW') .* K)).L
+        L = _chol(I + (sW * sW') .* K).L
         b = W .* (f .- m) .+ (t .- π_)
         a = b .- sW .* (L' \ (L \ (sW .* (K * b))))
         f = K * a .+ m
