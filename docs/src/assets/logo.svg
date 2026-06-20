@@ -27,8 +27,9 @@
 
     <!-- head (slightly smaller), connected to the body -->
     <circle cx="149" cy="81" r="13.5" fill="#2a2d43"/>
-    <!-- slim black bill (light outline so it reads on dark backgrounds too) -->
-    <path d="M 159 76 L 181 80 L 159 86 Z" fill="#15151c" stroke="#8a8a96" stroke-width="1.2" stroke-linejoin="round"/>
+    <!-- bill: same plumage navy as the head, organic taper (no outline — it reads from its
+         silhouette in light mode and recedes with the rest of the dark plumage in dark mode) -->
+    <path d="M 156 76 Q 172 77 182 82 Q 170 84 156 86 Z" fill="#2a2d43"/>
     <!-- eye -->
     <circle cx="151" cy="79" r="3" fill="#f4f4f7"/>
     <circle cx="152" cy="79" r="1.5" fill="#15151c"/>
