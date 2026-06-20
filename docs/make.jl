@@ -7,6 +7,8 @@ const GENDIR = joinpath(@__DIR__, "src", "generated")
 # (title, source-file) — Tasks 2 and 3 append entries here.
 const EXAMPLES = Tuple{String,String}[]
 
+push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))
+
 isdir(GENDIR) && rm(GENDIR; recursive=true)
 mkpath(GENDIR)
 for (_, src) in EXAMPLES
