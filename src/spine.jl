@@ -57,7 +57,6 @@ predmean(g::ExactGP, u) = _hasdata(g) ?
     only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
     only(AbstractGPs.mean(g.prior, [u]))
 
-_jitter(C22::AbstractMatrix; rel=1e-10) = rel * (tr(C22) / size(C22, 1))
 function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
     xnew = collect(X)
     C12 = AbstractGPs.cov(g.prior, g.x, xnew)                 # (n × m)

@@ -29,11 +29,17 @@ using AlphaGP: LaplaceGP, BinaryBALD
     g = AlphaGP.update(LaplaceGP(with_lengthscale(SqExponentialKernel(),1.0)), Xc, first.(Xc) .> 0)
     a = BinaryBALD(); x = [0.3]
     μ, v = mean(g,[x])[1], var(g,[x])[1]
-    C = sqrt(π*log(2)/2); λ = sqrt(π/8)
-    hb(p) = (q=clamp(p,eps(),1-eps()); -q*log2(q)-(1-q)*log2(1-q))   # bits, matching C
-    ref = hb(StatsFuns.normcdf(λ*μ/sqrt(v+1))) - C/sqrt(v+C^2)*exp(-(λ*μ)^2/(2(v+C^2)))
-    @test ref > 0                                      # at this near-boundary point the closed form is positive
-    @test a(g, x) ≈ ref rtol=1e-8                      # impl's clamp is identity here
+    # INDEPENDENT oracle: true binary BALD (bits) = H_b(E_f σ(f)) − E_f H_b(σ(f)) for the
+    # LOGISTIC likelihood, by fine-grid quadrature of N(μ,v). This is a different computation
+    # from the impl's Houlsby closed form, so it actually validates calibration (catches the
+    # ~2.5× error a closed-form-vs-closed-form check could not).
+    σ(f) = 1/(1+exp(-f))
+    hb(p) = (q=clamp(p,1e-15,1-1e-15); -q*log2(q)-(1-q)*log2(1-q))
+    fs = range(μ-12*sqrt(v), μ+12*sqrt(v); length=20001)
+    w = exp.(-(fs .- μ).^2 ./ (2v)); w ./= sum(w)
+    true_bald = hb(sum(w .* σ.(fs))) - sum(w .* hb.(σ.(fs)))
+    @test true_bald > 0
+    @test a(g, x) ≈ true_bald rtol=0.2                 # calibrated to Houlsby approximation error
     @test a(g, x) ≥ 0
     # high-confidence single-observation point: BALD stays small and ≥ 0
     # (the nats-vs-bits bug produced negative values here; the clamp + bits form fix it)

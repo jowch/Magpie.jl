@@ -25,10 +25,14 @@ const _λ_LOGIT = sqrt(π/8)                            # logistic→probit corr
 # bits, so the entropy term must match (nats would make BALD spuriously negative).
 _hbin(p) = (q = clamp(p, eps(), 1-eps()); -q*log2(q) - (1-q)*log2(1-q))
 function (::BinaryBALD)(g, x)
-    μ, v = predict(g, [x]); z = _λ_LOGIT * μ[1]
-    # Houlsby closed form: H[y|x,D] − E_f[H[y|x,f]] ≈ h_b(Φ(z/√(v+1))) − C/√(v+C²)·exp(−z²/(2(v+C²))).
-    # BALD is a mutual information (≥0); clamp the ~1e-3 negative dip of the approximation at high confidence.
-    bald = _hbin(normcdf(z / sqrt(v[1] + 1))) - _C_BALD / sqrt(v[1] + _C_BALD^2) * exp(-z^2 / (2*(v[1] + _C_BALD^2)))
+    μ, v = predict(g, [x])
+    # Logistic→probit correction σ(f)≈Φ(λf): with f~N(μ,v), λf~N(λμ, λ²v) — BOTH moments
+    # scale by λ. (Scaling only μ overestimates the true bits-BALD by ~2–2.5×; verified vs quadrature.)
+    z = _λ_LOGIT * μ[1]; s² = _λ_LOGIT^2 * v[1]
+    # Houlsby closed form: H[y|x,D] − E_f[H[y|x,f]] ≈ h_b(Φ(z/√(s²+1))) − C/√(s²+C²)·exp(−z²/(2(s²+C²))).
+    # Calibrated bits-BALD to ~Houlsby approximation error (~10%); BALD is a mutual information (≥0),
+    # so clamp the small negative dip the approximation can produce at high confidence.
+    bald = _hbin(normcdf(z / sqrt(s² + 1))) - _C_BALD / sqrt(s² + _C_BALD^2) * exp(-z^2 / (2*(s² + _C_BALD^2)))
     return max(bald, zero(bald))
 end
 # MulticlassBALD is DEFERRED (needs AugmentedGPLikelihoods.jl) — not in this plan.
