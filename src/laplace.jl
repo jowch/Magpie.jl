@@ -39,4 +39,4 @@ function Statistics.cov(g::LaplaceGP, xs::AbstractVector, ys::AbstractVector)
 end
 Statistics.cov(g::LaplaceGP, xs::AbstractVector) = (μσ = _latent_moments(g, xs); Diagonal(_hasdata(g) ? μσ[2] : AbstractGPs.var(g.prior, xs)))
 predmean(g::LaplaceGP, u) = mean(g, [u])[1]
-fit(g::LaplaceGP; kwargs...) = g
+fit(g::LaplaceGP; kwargs...) = g  # v1: no hyperparameter refit for the Laplace path
