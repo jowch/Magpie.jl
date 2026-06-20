@@ -36,19 +36,19 @@ Locked decisions:
 
 - **Build on, don't reinvent.** Hard-depend on `KernelFunctions.jl` and `AbstractGPs.jl` (reuse its `update_chol`/`update_posterior` incremental plumbing); `DifferentiationInterface.jl` for backend-agnostic AD; `GPLikelihoods.jl` when needed.
 - **AD is Mooncake-first**, via DifferentiationInterface. Zygote is a dying baseline (broken on Julia ≥1.12 in KernelFunctions); **Enzyme is a validated-later target** — it has live 2026 correctness bugs on the Cholesky paths we need. Keep factorizations **dense** (sparse Cholesky is broken under both Enzyme and Mooncake); wrap symmetric kernel matrices in `Matrix(...)` before `cholesky`. See `docs/research/autodiff-frontiers.md` (status box) and `landscape-scan.md` §3.
-- **One spine, two capabilities.** The shared primitive is a cached, incrementally-updated GP state (`L`, `α`). On it: (A) a composable **active-learning loop** with the level-set acquisitions (Straddle, BALD-for-classification) that are absent from the whole Julia ecosystem; (B) a **GP-in-SciML bridge** — a GP as an ODE RHS (GP-UDE), through-the-solver, trained via `GaussAdjoint`+`MooncakeVJP`. The only Julia prior art, GPDiffEq.jl, is a dormant PoC.
+- **One spine, two capabilities.** The shared primitive is a cached, incrementally-updated GP state (`L`, `α`). On it: (A) a composable **active-learning loop** with the level-set acquisitions (Straddle, BALD-for-classification) that are absent from the whole Julia ecosystem; (B) a **GP-in-SciML bridge** — a GP as an ODE RHS (GP-UDE), through-the-solver, trained via `GaussAdjoint`+`ReverseDiffVJP` (outer Mooncake; verified feasible). The only Julia prior art, GPDiffEq.jl, is a dormant PoC.
 - **Out of scope (anti-sprawl):** comprehensive BO frameworks, EP / neural meta-acquisition, full nonlinear physics kernels (Helfrich — only *linear*-constraint kernels are in scope), GPLVM/GP-attention/quantum. The AL-in-Julia graveyard is the warning.
 
 ### Build order
 
 0. **Shared primitives** — the incremental GP state (reuse AbstractGPs' `update_chol`; expose a public "add → update → predict/acquire" contract; state `(X, y, L::LowerTriangular, α)`, `α = K⁻¹y`, mean `kₓ·α`, var `k** − ‖L⁻¹kₓ‖²`) and a native **decoupled (Matheron) sampler** (`DecoupledGPSample` — *not* pure RFF, which suffers variance starvation). Both capabilities depend on these.
 1. **Spine + minimal AL loop** — exact regression + binary Laplace classification; acquisitions **Straddle → Randomized Straddle → binary BALD → multi-class BALD** (`docs/research/acquisition-functions.md`). Owner's primary interest, lowest risk.
-2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, sparse+inducing+decoupled sampling, **multiple shooting**, `GaussAdjoint`+`MooncakeVJP`; borrow GPDiffEq's derivative-GP + PULL, rebuild training.
+2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, sparse+inducing+decoupled sampling, **multiple shooting**, `GaussAdjoint`+`ReverseDiffVJP` (outer Mooncake); borrow GPDiffEq's derivative-GP + PULL, rebuild training.
 3. *(Then, only if pulled by use:)* linear-constraint kernels, latent-space embedding for high-D dynamics, more likelihoods.
 
 A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
 
-**Open spikes** (need a Julia env; see `framework-synthesis.md`): (1) GP-in-ODE through-solver differentiation end-to-end + cost; (2) Mooncake through `build_laplace_objective`; (3) `update_chol` under Mooncake.
+**Spikes resolved** (June 2026, `docs/research/spike-results.md`): (1) GP-in-ODE through-solver diff ✅ works (`GaussAdjoint`+`ReverseDiffVJP`, outer Mooncake; no `MooncakeVJP`, `MooncakeAdjoint` buggy); (3) `update_chol` under Mooncake ✅ works (so reuse it). (2) Mooncake through Laplace ❌ fails (try/catch in the Newton loop) — binary BALD needs the implicit-diff Laplace adjoint first. Remaining empirical work: GP-UDE cost at scale.
 
 ### Pedagogical intent
 
