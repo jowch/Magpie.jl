@@ -27,7 +27,7 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
     xnew = collect(X)
     δnew = y .- AbstractGPs.mean(g.prior, xnew)
     K = AbstractGPs.cov(g.prior, xnew) + g.noise * I
-    C = cholesky(Matrix(Symmetric(K)))
+    C = cholesky(Matrix(Symmetric(K)); check=false)
     ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
