@@ -1,0 +1,15 @@
+using AlphaGP, AbstractGPs, KernelFunctions, Test
+using AlphaGP: ExactGP, Straddle, Box, Candidates, acquire
+
+@testset "acquire maximizes the acquisition" begin
+    g = AlphaGP.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.4); noise=1e-4), [[0.0], [1.0]], [0.0, 1.0])
+    a = Straddle(h=0.5); cands = [[x] for x in range(0, 1; length=201)]
+
+    # (a) acquire over Candidates returns the argmax
+    xb = acquire(g, a; over=Candidates(cands))
+    @test a(g, xb) ≈ maximum(a(g, c) for c in cands) rtol=1e-10
+
+    # (b) acquire over Box returns a point at least as good as a corner
+    xb2 = acquire(g, a; over=Box([0.0], [1.0]))
+    @test a(g, xb2) ≥ a(g, [0.0]) - 1e-6
+end
