@@ -41,11 +41,14 @@ Locked decisions:
 
 ### Build order
 
-1. **Spine + minimal AL loop** — reuse AbstractGPs' `update_chol`; expose a public "add point → update → predict/acquire" contract; add Straddle/BALD; exact regression + Laplace classification first. Lowest risk, the owner's primary interest, and the SciML bridge needs the same primitive. The persistent state is `(X, y, L::LowerTriangular, α)` with `α = K⁻¹y`; predictive mean `kₓ·α`, variance `k** − ‖L⁻¹kₓ‖²`, LML reads off `L`'s diagonal.
-2. **GP-in-SciML bridge** — proves the interop thesis; stresses the AD/solver contracts hardest.
-3. *(Then, only if pulled by use:)* linear-constraint kernels, inducing-point/sparse representations when profiling demands, more likelihoods.
+0. **Shared primitives** — the incremental GP state (reuse AbstractGPs' `update_chol`; expose a public "add → update → predict/acquire" contract; state `(X, y, L::LowerTriangular, α)`, `α = K⁻¹y`, mean `kₓ·α`, var `k** − ‖L⁻¹kₓ‖²`) and a native **decoupled (Matheron) sampler** (`DecoupledGPSample` — *not* pure RFF, which suffers variance starvation). Both capabilities depend on these.
+1. **Spine + minimal AL loop** — exact regression + binary Laplace classification; acquisitions **Straddle → Randomized Straddle → binary BALD → multi-class BALD** (`docs/research/acquisition-functions.md`). Owner's primary interest, lowest risk.
+2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, sparse+inducing+decoupled sampling, **multiple shooting**, `GaussAdjoint`+`MooncakeVJP`; borrow GPDiffEq's derivative-GP + PULL, rebuild training.
+3. *(Then, only if pulled by use:)* linear-constraint kernels, latent-space embedding for high-D dynamics, more likelihoods.
 
-Note: a custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
+A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
+
+**Open spikes** (need a Julia env; see `framework-synthesis.md`): (1) GP-in-ODE through-solver differentiation end-to-end + cost; (2) Mooncake through `build_laplace_objective`; (3) `update_chol` under Mooncake.
 
 ### Pedagogical intent
 
