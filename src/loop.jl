@@ -1,5 +1,5 @@
 mutable struct ActiveLearner{A}
-    gp::GPModel; acq::A
+    gp::AbstractGPModel; acq::A
     Xs::Vector{Any}; Ys::Vector{Any}; acq_vals::Vector{Float64}
 end
 ActiveLearner(gp, acq) = ActiveLearner{typeof(acq)}(gp, acq, Any[], Any[], Float64[])
@@ -13,10 +13,10 @@ function observe!(al::ActiveLearner, X, Y)
     Xv = _isbatch(X) ? X : [X]
     Yv = Y isa AbstractVector ? Y : [Y]
     append!(al.Xs, Xv); append!(al.Ys, Yv)
-    al.gp = AlphaGP.update(al.gp, Xv, Yv)
+    al.gp = Magpie.update(al.gp, Xv, Yv)
     return al
 end
-fit!(al::ActiveLearner; restarts::Int=1) = (al.gp = AlphaGP.fit(al.gp; restarts=restarts); al)
+fit!(al::ActiveLearner; restarts::Int=1) = (al.gp = Magpie.fit(al.gp; restarts=restarts); al)
 
 function acquire(al::ActiveLearner; over, maximizer=default_for(over), q::Int=1)
     q == 1 || error("batch acquisition (q>1) not yet implemented; use q=1")

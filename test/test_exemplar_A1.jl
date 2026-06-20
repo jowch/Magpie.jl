@@ -1,6 +1,6 @@
-using AlphaGP, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test
+using Magpie, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test
 using StatsBase: mean_and_var
-using AlphaGP: ExactGP, Straddle, ActiveLearner, observe!, run!, posterior_gp,
+using Magpie: ExactGP, Straddle, ActiveLearner, observe!, run!, posterior_gp,
                queried_points, all_data, Box, grid_points, predmean, update, _lengthscale
 
 @testset "A1: Straddle recovers the unit circle level set" begin

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-`AlphaGP.jl` is a Julia package at the **stub stage** — `src/AlphaGP.jl` is a `greet()` hello-world and nothing has been implemented yet. The real content right now is the thinking, distilled into `docs/research/` (start at `docs/research/README.md`). These are **research notes, not commitments** — no code or architecture has been decided. Read them before writing any non-trivial code; they record not just what to build but why each numerical and autodiff choice was made. `docs/research/critique.md` is the opinionated counterweight (what is worth doing, ranked by payoff) and should be read alongside the synthesis.
+`Magpie.jl` is a Julia package at the **stub stage** — `src/Magpie.jl` is a `greet()` hello-world and nothing has been implemented yet. The real content right now is the thinking, distilled into `docs/research/` (start at `docs/research/README.md`). These are **research notes, not commitments** — no code or architecture has been decided. Read them before writing any non-trivial code; they record not just what to build but why each numerical and autodiff choice was made. `docs/research/critique.md` is the opinionated counterweight (what is worth doing, ranked by payoff) and should be read alongside the synthesis.
 
 ## Commands
 

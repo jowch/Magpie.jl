@@ -1,11 +1,11 @@
 # Our GP types subtype AbstractGPs.AbstractGP (so we inherit f(x)→FiniteGP, rand,
 # logpdf, the Distributions interface) but additionally implement an extended contract
 # the active-learning loop and SciML bridge require: `update(g, X, y)` (incremental
-# conditioning), `fit(g; …)`, `predmean(g, u)`. `GPModel` names exactly that contract —
+# conditioning), `fit(g; …)`, `predmean(g, u)`. `AbstractGPModel` names exactly that contract —
 # subtype it + implement those methods to plug a new GP (e.g. a sparse GP) into the loop.
-abstract type GPModel <: AbstractGPs.AbstractGP end
+abstract type AbstractGPModel <: AbstractGPs.AbstractGP end
 
-struct ExactGP{Tp,Tx,Tδ,TC,Tα} <: GPModel
+struct ExactGP{Tp,Tx,Tδ,TC,Tα} <: AbstractGPModel
     prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64
 end
 ExactGP(kernel::Kernel; noise::Real=1e-6, mean=AbstractGPs.ZeroMean()) =

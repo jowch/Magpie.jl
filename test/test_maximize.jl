@@ -1,8 +1,8 @@
-using AlphaGP, AbstractGPs, KernelFunctions, Test
-using AlphaGP: ExactGP, Straddle, Box, Points, acquire
+using Magpie, AbstractGPs, KernelFunctions, Test
+using Magpie: ExactGP, Straddle, Box, Points, acquire
 
 @testset "acquire maximizes the acquisition" begin
-    g = AlphaGP.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.4); noise=1e-4), [[0.0], [1.0]], [0.0, 1.0])
+    g = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.4); noise=1e-4), [[0.0], [1.0]], [0.0, 1.0])
     a = Straddle(h=0.5); cands = [[x] for x in range(0, 1; length=201)]
 
     # (a) acquire over Points returns the argmax

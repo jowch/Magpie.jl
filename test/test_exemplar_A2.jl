@@ -1,5 +1,5 @@
-using AlphaGP, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test
-using AlphaGP: LaplaceGP, BinaryBALD, ActiveLearner, observe!, run!, posterior_gp, Box, grid_points, predmean
+using Magpie, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test
+using Magpie: LaplaceGP, BinaryBALD, ActiveLearner, observe!, run!, posterior_gp, Box, grid_points, predmean
 
 @testset "A2: BinaryBALD + LaplaceGP recovers a decision boundary" begin
     Random.seed!(7)

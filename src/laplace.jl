@@ -1,4 +1,4 @@
-struct LaplaceGP{Tp,Tx,Ty,Ta,TW,TL} <: GPModel
+struct LaplaceGP{Tp,Tx,Ty,Ta,TW,TL} <: AbstractGPModel
     prior::Tp; x::Tx; y::Ty; a::Ta; W::TW; L::TL   # y::Vector{Bool} stored for incremental conditioning; a = K⁻¹(f̂−m); W, L = chol(B) from MAP
 end
 LaplaceGP(kernel::Kernel; mean=AbstractGPs.ZeroMean()) =
