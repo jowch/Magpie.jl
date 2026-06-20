@@ -12,3 +12,6 @@ LocalPreferences.toml
 
 # throwaway spikes / prototypes
 /scratch/
+
+# superpowers working artifacts (local-only: design specs + implementation plans)
+/.superpowers/
