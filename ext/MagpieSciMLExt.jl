@@ -253,7 +253,6 @@ end
 # ---------------------------------------------------------------------------
 
 import ForwardDiff
-import Statistics
 
 field_mean(gps, u) = [predmean(g, u) for g in gps]
 pull_jacobian(gps, u) = ForwardDiff.jacobian(uu -> field_mean(gps, uu), u)
@@ -267,14 +266,15 @@ moment-matching recurrence (no ODE solver). `gps` is a `Vector{ExactGP}` (one pe
 dimension). Returns `μs` and `Σs` — vectors of mean vectors and covariance matrices at
 each time step in `ts`.
 
-Recurrence (corrected, with cross-cov Dₙ):
+Recurrence (PULL, arXiv:2211.11103 eq 36b, with cross-cov Dₙ):
     Aₙ = I + h·Jₙ,  Jₙ = ForwardDiff Jacobian of field_mean at μₙ
-    Vₙ = diag GP marginal variance at μₙ  (injection rate, per unit time)
-    Dₙ = buffer-truncated cross-cov: h · Σᵢ (∏ Aₖ) · cov_f(μᵢ, μₙ)
-    Σₙ₊₁ = Sym(AₙΣₙAₙᵀ) + h·Vₙ + h(AₙDₙ + DₙᵀAₙᵀ)
+    Vₙ = diag GP marginal variance at μₙ
+    Dₙ = buffer-truncated cross-cov: h · Σᵢ (∏ Aₖ) · cov_f(μᵢ, μₙ)   (carries one h)
+    Σₙ₊₁ = Sym(AₙΣₙAₙᵀ) + h²·Vₙ + h(AₙDₙ + DₙᵀAₙᵀ)
 
-Note: Vₙ is injected as h·Vₙ (continuous-time IID noise rate), matching the oracle formula
-Σ(t) = (β/(-2a))(1-exp(2at)) with β = field_var(gps, μ).
+Note: the field-variance term is h²·Vₙ — Euler `x→x+h·f` gives `Var(h·f)=h²·Var(f)` (NOT a
+white-noise rate h·Vₙ). Exact linear-field oracle is eq 21b Σ(t)=(β/a²)(1−e^{at})² (coherent),
+not the white-noise (β/−2a)(1−e^{2at}); the cross-cov Dₙ realizes the coherence ("past matters").
 """
 function pull_propagate(gps, u0, ts; buffer::Int=20)
     d = length(u0); μ = collect(float.(u0)); Σ = zeros(d, d)
