@@ -247,4 +247,60 @@ function Magpie.posterior_sparsegps(field::SVGPField, v)
             for i in 1:field.dout]
 end
 
+# ---------------------------------------------------------------------------
+# PULL uncertainty propagation (Stage 4). No ODE solver — discrete moment-matching recurrence.
+# Operates on already-built ExactGPs (from Magpie.update); no training involved.
+# ---------------------------------------------------------------------------
+
+import ForwardDiff
+import Statistics
+
+field_mean(gps, u) = [predmean(g, u) for g in gps]
+pull_jacobian(gps, u) = ForwardDiff.jacobian(uu -> field_mean(gps, uu), u)
+field_var(gps, u) = Diagonal([only(AbstractGPs.var(g, [u])) for g in gps])
+
+"""
+    pull_propagate(gps, u0, ts; buffer=20) -> (μs, Σs)
+
+Propagate a Gaussian uncertainty (μ, Σ) forward through the GP field via a corrected
+moment-matching recurrence (no ODE solver). `gps` is a `Vector{ExactGP}` (one per output
+dimension). Returns `μs` and `Σs` — vectors of mean vectors and covariance matrices at
+each time step in `ts`.
+
+Recurrence (corrected, with cross-cov Dₙ):
+    Aₙ = I + h·Jₙ,  Jₙ = ForwardDiff Jacobian of field_mean at μₙ
+    Vₙ = diag GP marginal variance at μₙ  (injection rate, per unit time)
+    Dₙ = buffer-truncated cross-cov: h · Σᵢ (∏ Aₖ) · cov_f(μᵢ, μₙ)
+    Σₙ₊₁ = Sym(AₙΣₙAₙᵀ) + h·Vₙ + h(AₙDₙ + DₙᵀAₙᵀ)
+
+Note: Vₙ is injected as h·Vₙ (continuous-time IID noise rate), matching the oracle formula
+Σ(t) = (β/(-2a))(1-exp(2at)) with β = field_var(gps, μ).
+"""
+function pull_propagate(gps, u0, ts; buffer::Int=20)
+    d = length(u0); μ = collect(float.(u0)); Σ = zeros(d, d)
+    μs = [copy(μ)]; Σs = [copy(Σ)]; histμ = [copy(μ)]; histA = Matrix{Float64}[]
+    for n in 1:(length(ts)-1)
+        h = ts[n+1] - ts[n]
+        A = I + h .* pull_jacobian(gps, μ)
+        V = field_var(gps, μ)                                # marginal variance V_n (buffer-free term)
+        Dn = zeros(d, d)                                     # cross-cov D_n, truncated to `buffer`
+        if buffer > 0
+            lo = max(1, length(histμ) - buffer + 1); prodA = Matrix{Float64}(I, d, d)
+            for i in length(histμ):-1:lo
+                # TRUE field cross-covariance cov_f(μ_i, μ_n), not the marginal variance proxy.
+                # Independent outputs ⇒ diagonal: cov(gps[k], [μ_i], [μ_n]) per output k.
+                covf = Diagonal([only(AbstractGPs.cov(gps[k], [histμ[i]], [μ])) for k in 1:d])
+                Dn += prodA * covf
+                i > lo && (prodA = prodA * histA[i-1])
+            end
+            Dn .*= h
+        end
+        Σ = Matrix(Symmetric(A*Σ*A' + h .* Matrix(V) + h .* (A*Dn + Dn'*A')))
+        for k in 1:d; Σ[k,k] < 0 && (@warn "PULL: negative variance clamped" step=n; Σ[k,k]=eps()); end
+        μ = μ + h .* field_mean(gps, μ)
+        push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
+    end
+    return μs, Σs
+end
+
 end # module

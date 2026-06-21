@@ -12,4 +12,5 @@ using Test
     # assertion (run in CI's docs-examples job), not a standalone test — see the plan's Stage-1 re-plan.
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_stage2.jl")
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_svgp_mo.jl")
+    get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_pull.jl")
 end
