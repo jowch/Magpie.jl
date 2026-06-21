@@ -35,3 +35,6 @@ JuliaLocalPreferences.toml
 
 # internal research notes (kept local, not part of the public surface)
 /docs/research/
+
+# local planning specs / SDD ledger (not for public repo)
+.superpowers/
