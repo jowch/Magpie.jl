@@ -27,7 +27,7 @@ Two capabilities hang off one shared, incrementally-updated GP spine:
 
 - **Active learning** — a composable `fit → acquire → observe → update` loop with
   **level-set / boundary acquisitions** (Straddle, BALD-for-classification) that are
-  otherwise absent from the Julia ecosystem.
+  not yet available in Julia's GP / Bayesian-optimization packages.
 - **GP-in-SciML** *(next milestone)* — a GP as the right-hand side of an ODE, trained
   *through the solver*, for data-efficient, uncertainty-calibrated dynamics discovery.
 
@@ -104,7 +104,11 @@ is enabled.
 
 ## Ecosystem context
 
-Magpie builds on [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) and [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — it reuses their GP core and kernel library rather than reinventing them. For optimization-style infill (expected improvement, upper confidence bound, SRBF), [Surrogates.jl](https://github.com/SciML/Surrogates.jl) and [BayesianOptimization.jl](https://github.com/jbrea/BayesianOptimization.jl) are mature choices; they target minima. Magpie's active-learning acquisitions (Straddle, BinaryBALD) instead target level sets and classification boundaries — a different objective these packages don't aim at. For GP-as-ODE-field work, [GPDiffEq.jl](https://github.com/Crown421/GPDiffEq.jl) is the original proof of concept and deserves the credit; Magpie's Capability B (not yet built) continues that direction on a through-solver, Mooncake-trained path.
+Magpie builds on [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) and [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — it reuses their GP core and kernel library rather than reinventing them.
+
+For optimization-style infill (expected improvement, upper confidence bound, SRBF), [Surrogates.jl](https://github.com/SciML/Surrogates.jl) and [BayesianOptimization.jl](https://github.com/jbrea/BayesianOptimization.jl) are mature choices; they target minima. Magpie's active-learning acquisitions (Straddle, BinaryBALD) target level sets and classification boundaries instead — a different objective these packages don't aim at.
+
+For GP-as-ODE-field work, [GPDiffEq.jl](https://github.com/Crown421/GPDiffEq.jl) is the original proof of concept and deserves the credit; Magpie's Capability B (not yet built) continues that direction on a through-solver, Mooncake-trained path.
 
 ## Design notes
 

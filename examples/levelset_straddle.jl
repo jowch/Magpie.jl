@@ -15,9 +15,10 @@ using Plots; gr()
 #
 # Many scientific tasks ask not *where is the minimum of f?* but
 # *where does f change sign?* — the boundary of a feasible region,
-# a decision surface, or a phase boundary.  Bayesian optimisation
-# frameworks such as Surrogates.jl and BayesianOptimization.jl target
-# minima; Magpie's Straddle acquisition targets a **contour**.
+# a decision surface, or a phase boundary.  For minimum-finding, mature
+# packages like Surrogates.jl and BayesianOptimization.jl work well.
+# Magpie's Straddle acquisition targets a **contour** instead — a
+# different question, and a different tool.
 #
 # The Straddle criterion (Bryan et al. 2005) is:
 #
@@ -96,7 +97,7 @@ plt1 = heatmap(xs, ys, Z_mean;
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
 ## overlay the TRUE level set (zero contour of f), not the posterior's own contour
-contour!(plt1, xs, ys, Z_true; levels=[0.0], lw=2, lc=:black, label="true h=0")
+contour!(plt1, xs, ys, Z_true; levels=[0.0], lw=2, lc=:black, label="true level set (h = 0)")
 scatter!(plt1, px, py;
     ms     = 4,
     mc     = :white,
@@ -121,7 +122,7 @@ plt2 = heatmap(xs, ys, Z_acq;
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
 
-# ## Hidden assertions (run when this file is executed directly; stripped from the rendered page)
+# The example's correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.
 
 using Test  #src
 grid = grid_points(box; per_axis=50)                                             #src

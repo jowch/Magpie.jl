@@ -4,7 +4,7 @@ using Documenter, Literate, Magpie
 const EXDIR  = joinpath(@__DIR__, "..", "examples")
 const GENDIR = joinpath(@__DIR__, "src", "generated")
 
-# (title, source-file) — Tasks 2 and 3 append entries here.
+# Example pages (Literate source → generated page); add new examples here.
 const EXAMPLES = Tuple{String,String}[]
 
 push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))

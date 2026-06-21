@@ -2,7 +2,7 @@
 #
 # Active learning earns its keep only when each observation is **expensive**.
 # A drug-discovery ADMET panel runs roughly \$3k–\$8k per compound; synchrotron
-# beam time costs around \$456 per hour; expert image labeling can consume
+# beam time costs several hundred dollars per hour; expert image labeling can consume
 # person-years.  When labels are cheap and abundant, a larger passively-collected
 # dataset simply wins — standard ML is the right tool.  But when each query
 # has a real cost, the question is no longer *how accurate can we get?* but
@@ -14,7 +14,7 @@
 #   the decision boundary (mutual information between label and model parameters;
 #   Houlsby et al. 2011).
 # - **Uniform random** — draws the next query uniformly at random with no
-#   acquisition signal (Settles 2012).
+#   acquisition signal.
 #
 # The headline is a *learning curve* — test accuracy vs number of queries,
 # averaged over 10 paired seeds with ±1 SD bands.
@@ -168,10 +168,11 @@ scatter!(plt2, px1, py1;
     label = "BALD queries",
 )
 
-# ## Hidden assertions (run when this file is executed directly; stripped from the rendered page)
+# The example's correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.
 
 using Test  #src
 @test mb[end] > mr[end] + 0.05            #src
 qb = findfirst(>=(0.80), mb)              #src
 @test qb !== nothing && qb <= 35          #src
 @test findfirst(>=(0.80), mr) === nothing #src
+@test sum(bald_curves[s][end] > rand_curves[s][end] for s in eachindex(SEEDS)) >= 8  #src

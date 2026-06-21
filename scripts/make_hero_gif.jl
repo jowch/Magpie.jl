@@ -31,7 +31,7 @@ ys = range(-2, 2; length=40)
 
 nframes = 30
 
-anim = @animate for i in 1:nframes
+anim = @animate for _ in 1:nframes
     # Step one acquisition
     x = acquire(al; over=box)
     observe!(al, x, f(x))
@@ -39,6 +39,9 @@ anim = @animate for i in 1:nframes
     # Compute posterior mean on the grid
     g = posterior_gp(al)
     Z_mean = [predmean(g, [xi, yj]) for yj in ys, xi in xs]
+
+    # Compute the true signed-distance field for the honest contour overlay
+    Z_true = [f([xi, yj]) for yj in ys, xi in xs]
 
     # Query points accumulated so far
     pts = queried_points(al)
@@ -59,7 +62,7 @@ anim = @animate for i in 1:nframes
         ylabel       = "x₂",
         colorbar     = false,
     )
-    contour!(xs, ys, Z_mean; levels=[0.0], lw=2, lc=:black)
+    contour!(xs, ys, Z_true; levels=[0.0], lw=2, lc=:black)  # the TRUE unit circle, not the posterior's own contour
     scatter!(px, py;
         ms    = 4,
         mc    = :white,
