@@ -9,6 +9,8 @@
   a GP as a differentiable, uncertainty-aware component.</em>
 </p>
 
+<p align="center"><img src="docs/src/assets/hero.gif" width="520" alt="Active learning recovering a level set"/></p>
+
 > **Status: v0.1, experimental.** The incremental-GP spine and active-learning loop are
 > implemented and tested; the GP-in-SciML bridge is the next milestone. APIs may move.
 
@@ -82,6 +84,12 @@ g = posterior_gp(al)
 predmean(g, [0.3, 0.4]) > 0                 # predicted class (latent mean > 0 ⇒ inside)
 ```
 
+For fully worked examples see
+[`examples/levelset_straddle.jl`](examples/levelset_straddle.jl) (Straddle level-set
+recovery) and [`examples/bald_classification.jl`](examples/bald_classification.jl)
+(BinaryBALD classification boundary). These render as documentation pages once GitHub Pages
+is enabled.
+
 ## How it fits together
 
 - **`AbstractGPModel <: AbstractGPs.AbstractGP`** is the contract: implement `update`,
@@ -93,6 +101,10 @@ predmean(g, [0.3, 0.4]) > 0                 # predicted class (latent mean > 0 �
   classification. Both differentiate under [Mooncake](https://github.com/chalk-lab/Mooncake.jl).
 - **Acquisitions** (`Straddle`, `RandStraddle`, `BinaryBALD`) are differentiable functions
   of the posterior; **`acquire`** maximizes one over a `Box` or `Points` domain.
+
+## Where it fits
+
+Magpie builds on [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) and [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — it reuses their GP core and kernel library rather than reinventing them. For optimization-style infill (expected improvement, upper confidence bound, SRBF), [Surrogates.jl](https://github.com/SciML/Surrogates.jl) and [BayesianOptimization.jl](https://github.com/jbrea/BayesianOptimization.jl) are mature choices; they target minima. Magpie's active-learning acquisitions (Straddle, BinaryBALD) instead target level sets and classification boundaries — a different objective these packages don't aim at. For GP-as-ODE-field work, [GPDiffEq.jl](https://github.com/Crown421/GPDiffEq.jl) is the original proof of concept and deserves the credit; Magpie's Capability B (not yet built) continues that direction on a through-solver, Mooncake-trained path.
 
 ## Design notes
 
