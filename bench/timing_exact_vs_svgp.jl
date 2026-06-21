@@ -16,8 +16,7 @@
 #
 # It keeps an internal @assert (SVGP allocs < Exact/2 at N=200) so a by-hand run self-checks.
 #
-# NOTE: This script is NOT in the default test suite (runtests.jl). It is slow and
-# timing-based. Opt-in: MAGPIE_BENCH=true alongside MAGPIE_TEST_SCIML=true.
+# NOTE: This script is NOT wired into runtests.jl at all — benchmarks are run by hand, not CI gates.
 
 using Magpie, KernelFunctions, LinearAlgebra, Random
 using OrdinaryDiffEq, SciMLSensitivity
