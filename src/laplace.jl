@@ -27,10 +27,10 @@ full observation history is retained. Field names follow R&W Algorithm 3.1.
 
 Build an unconditioned `LaplaceGP`; condition it on labels with [`update`](@ref).
 """
-struct LaplaceGP{Tp,Tx,Ty,Ta,TW,TL} <: AbstractGPModel
+struct LaplaceGP{Tp, Tx, Ty, Ta, TW, TL} <: AbstractGPModel
     prior::Tp; x::Tx; y::Ty; a::Ta; W::TW; L::TL
 end
-LaplaceGP(kernel::Kernel; mean=AbstractGPs.ZeroMean()) =
+LaplaceGP(kernel::Kernel; mean = AbstractGPs.ZeroMean()) =
     LaplaceGP(AbstractGPs.GP(mean, kernel), Any[], Bool[], Float64[], Float64[], nothing)
 
 # True once the GP has been conditioned on data (the MAP Cholesky factor exists).
@@ -52,7 +52,7 @@ current class probabilities `σ(f)`.
 """
 function _laplace_fit(prior, x, y_bool)
     m = AbstractGPs.mean(prior, x); t = float.(y_bool)
-    K = Matrix(Symmetric(AbstractGPs.cov(prior, x))) + 1e-9I
+    K = Matrix(Symmetric(AbstractGPs.cov(prior, x))) + 1.0e-9I
     f = copy(m); local a, W, L
     for _ in 1:30                                   # fixed, unrolled Newton steps (Mooncake-clean)
         π_ = _σ.(f); W = π_ .* (1 .- π_); sW = sqrt.(W)
@@ -75,7 +75,7 @@ function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector{Bool})
     xall = vcat(g.x, collect(X))
     yall = vcat(g.y, y)
     a, W, L = _laplace_fit(g.prior, xall, yall)
-    LaplaceGP(g.prior, xall, yall, a, W, L)
+    return LaplaceGP(g.prior, xall, yall, a, W, L)
 end
 
 """
@@ -88,12 +88,12 @@ function _latent_moments(g::LaplaceGP, xs)
     Ks = AbstractGPs.cov(g.prior, g.x, xs); sW = sqrt.(g.W)
     μ = AbstractGPs.mean(g.prior, xs) .+ Ks' * g.a
     v = g.L \ (sW .* Ks)                                      # whitened test cross-cov
-    σ² = AbstractGPs.var(g.prior, xs) .- vec(sum(v .^ 2; dims=1))
+    σ² = AbstractGPs.var(g.prior, xs) .- vec(sum(v .^ 2; dims = 1))
     return μ, σ²
 end
 Statistics.mean(g::LaplaceGP, xs::AbstractVector) = _hasdata(g) ? _latent_moments(g, xs)[1] : AbstractGPs.mean(g.prior, xs)
-Statistics.var(g::LaplaceGP, xs::AbstractVector)  = _hasdata(g) ? _latent_moments(g, xs)[2] : AbstractGPs.var(g.prior, xs)
-mean_and_var(g::LaplaceGP, xs::AbstractVector) = _hasdata(g) ? _latent_moments(g, xs) : (AbstractGPs.mean(g.prior,xs), AbstractGPs.var(g.prior,xs))
+Statistics.var(g::LaplaceGP, xs::AbstractVector) = _hasdata(g) ? _latent_moments(g, xs)[2] : AbstractGPs.var(g.prior, xs)
+mean_and_var(g::LaplaceGP, xs::AbstractVector) = _hasdata(g) ? _latent_moments(g, xs) : (AbstractGPs.mean(g.prior, xs), AbstractGPs.var(g.prior, xs))
 function Statistics.cov(g::LaplaceGP, xs::AbstractVector, ys::AbstractVector)
     c = AbstractGPs.cov(g.prior, xs, ys)
     _hasdata(g) || return c

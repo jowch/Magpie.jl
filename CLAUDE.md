@@ -36,6 +36,14 @@ julia --project=. test/test_acquisitions.jl        # acquisitions only
 
 `test/runtests.jl` includes each `test_*.jl` under one top-level `@testset`. To run one set, run its file directly (above) or edit `runtests.jl` to `include` only that file — Julia has no built-in single-`@testset` runner. The AD tests (`test_ad.jl`, and the Mooncake checks in `test_laplace.jl`) precompile Mooncake and take ~30s+ each; the full suite is ~2 min.
 
+### Formatting
+
+Code is formatted with [Runic.jl](https://github.com/fredrikekre/Runic.jl) (non-configurable; no style file) and checked in CI via `fredrikekre/runic-action`. Format before committing:
+
+```bash
+git ls-files -z -- '*.jl' | xargs -0 runic --inplace   # needs `runic` on PATH (Julia ≥1.12: julia -e 'using Pkg; Pkg.Apps.add("Runic")')
+```
+
 ## Intended direction
 
 The thesis (see `docs/research/framework-synthesis.md`): **a Julia-ecosystem-native GP package where the bridges are the product** — a GP as a differentiable, uncertainty-aware component that composes with autodiff, SciML, and ML. It is a good, useful, extensible foundation first; SAXS, dynamics discovery, etc. are *example applications*, not architecture drivers.

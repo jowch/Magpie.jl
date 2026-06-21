@@ -6,6 +6,15 @@ on:
   pull_request:
 
 jobs:
+  runic:
+    name: Runic formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: fredrikekre/runic-action@v1
+        with:
+          version: '1'
+
   test:
     name: Julia ${{ matrix.julia-version }} — tests
     runs-on: ubuntu-latest
@@ -14,7 +23,7 @@ jobs:
       matrix:
         julia-version: ['1.10', '1']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.julia-version }}
@@ -28,10 +37,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
+      - uses: julia-actions/cache@v2
       - name: Instantiate docs environment
         run: julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
       - name: Anti-rot — run example sources (executes #src @test assertions)

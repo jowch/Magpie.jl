@@ -51,7 +51,7 @@ end
 
 Refit the GP's hyperparameters in place (see [`fit`](@ref)).
 """
-fit!(al::ActiveLearner; restarts::Int=1) = (al.gp = Magpie.fit(al.gp; restarts=restarts); al)
+fit!(al::ActiveLearner; restarts::Int = 1) = (al.gp = Magpie.fit(al.gp; restarts = restarts); al)
 
 """
     acquire(al::ActiveLearner; over, maximizer=default_for(over), q=1)
@@ -59,9 +59,9 @@ fit!(al::ActiveLearner; restarts::Int=1) = (al.gp = Magpie.fit(al.gp; restarts=r
 Pick the next query point by maximizing the (resampled) acquisition over `over`.
 Batch acquisition (`q > 1`) is not yet implemented.
 """
-function acquire(al::ActiveLearner; over, maximizer=default_for(over), q::Int=1)
+function acquire(al::ActiveLearner; over, maximizer = default_for(over), q::Int = 1)
     q == 1 || error("batch acquisition (q>1) not yet implemented; use q=1")
-    return acquire(al.gp, resample(al.acq); over=over, maximizer=maximizer)
+    return acquire(al.gp, resample(al.acq); over = over, maximizer = maximizer)
 end
 
 """
@@ -72,11 +72,11 @@ acquisition, picks the next point over `over`, queries `oracle` for its value, a
 conditions the GP on it. Stops early when `stop(al)` is true; refits hyperparameters
 every `refit_every` rounds (`0` disables refitting).
 """
-function run!(al::ActiveLearner, oracle; budget::Int, over, stop = al -> false, refit_every::Int=0)
+function run!(al::ActiveLearner, oracle; budget::Int, over, stop = al -> false, refit_every::Int = 0)
     for t in 1:budget
         stop(al) && break
         acq = resample(al.acq)
-        x = acquire(al.gp, acq; over=over)
+        x = acquire(al.gp, acq; over = over)
         push!(al.acq_vals, acq(al.gp, x))
         observe!(al, x, oracle(x))
         refit_every > 0 && t % refit_every == 0 && fit!(al)
