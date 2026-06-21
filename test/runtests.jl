@@ -5,4 +5,5 @@ using Test
     include("test_maximize.jl"); include("test_loop.jl"); include("test_exemplar_A1.jl")
     include("test_exemplar_A2.jl")
     include("test_gpude_unit.jl")
+    include("test_exemplar_B_grad.jl")
 end
