@@ -9,6 +9,10 @@ const EXAMPLES = Tuple{String, String}[]
 
 push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))
 push!(EXAMPLES, ("Decision boundary (BinaryBALD)", "bald_classification.jl"))
+push!(EXAMPLES, ("GP-UDE: Lotka-Volterra",                  "gp_ude_lotka_volterra.jl"))
+push!(EXAMPLES, ("GP-UDE: Van der Pol (stiff solver)",      "gp_ude_vanderpol.jl"))
+push!(EXAMPLES, ("GP-UDE: FitzHugh-Nagumo (UDE decomp)",   "gp_ude_fitzhugh_nagumo.jl"))
+push!(EXAMPLES, ("GP-UDE: scale-forcing (SVGP + Pathwise)", "gp_ude_scale_forcing.jl"))
 
 isdir(GENDIR) && rm(GENDIR; recursive = true)
 mkpath(GENDIR)
