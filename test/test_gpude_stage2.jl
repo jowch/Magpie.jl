@@ -30,45 +30,12 @@ using Magpie: ExactGPField, FieldLayout, MultipleShooting
     @test norm(g_fd[s2]) > 1e-4                        # per-segment node differentiates
 end
 
-# ---------------------------------------------------------------------------
-# Single-vs-multiple-shooting contrast — env-gated (slow ADAM recipe, ~10 min), NOT in the
-# default suite. Controller-validated 2026-06-21 (multiple ≈0.39 < 0.5; single ≈1.49).
-# ---------------------------------------------------------------------------
-if get(ENV, "MAGPIE_TEST_STAGE2_LH", "") == "true"
-    @testset "Stage 2: multiple shooting recovers a horizon where single-shooting fails" begin
-        # Controller-validated (2026-06-21): on (0,6) (~1.5 LV periods) single-shooting stalls
-        # (sol_rmse ≈ 1.49 even with the ADAM→LBFGS recipe) while 8-segment multiple shooting recovers
-        # (sol_rmse ≈ 0.39). A much longer (0,18)≈4.5-period horizon is NOT a clean gate: the
-        # full-horizon single-shot rmse metric amplifies field error over many periods, so neither
-        # method scores < 0.5 there regardless of segment fit quality.
-        Random.seed!(20)
-        lv!(du,u,p,t) = (du[1]=1.5u[1]-u[1]*u[2]; du[2]=u[1]*u[2]-3u[2]; nothing)
-        u0=[1.0,1.0]; tspan=(0.0,6.0); ts=collect(range(tspan...; length=20))
-        target = Array(solve(ODEProblem(lv!,u0,tspan),Tsit5();saveat=ts))
-        Z = Magpie.kmeans_anchors(target, 14; rng=MersenneTwister(5))
-        ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-        L  = Magpie.FieldLayout(14, 2)
-        # make_loss is a Gaussian NLL now; recover SSE = 2σ²·(NLL − (Nd/2)log(2πσ²)) for the RMSE metric.
-        function rmse(field, vopt)
-            Nd = 20*2; σ2 = exp(2*vopt[Magpie.NHYP])
-            nll = ext.make_loss(field, L, u0, tspan, ts, target; λ=0.0, λσ=0.0)(vopt)
-            sqrt(2σ2*(nll - (Nd/2)*log(2π*σ2)) / Nd)
-        end
-
-        # single shooting FAILS this horizon — seed-fixed to Random.seed!(20) above; validated ≈1.49.
-        # Threshold 1.0 has >0.5 margin below the validated value; if the seed produces rmse < 1.0
-        # (e.g. due to solver tolerance drift), demote to @info and document here.
-        f1 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
-        f1, v1 = Magpie.train!(f1, (ts, target); tspan, adam_iters=500, maxiters=300, λ=1/(20*2))
-        single_rmse = rmse(f1, v1)
-        @info "Stage-2 contrast (single)" single=single_rmse
-        @test single_rmse > 1.0   # single-shooting stalls on (0,6) ≈ 1.5 LV periods (validated ≈1.49)
-
-        # multiple shooting: 8 segments recovers this horizon (single does not)
-        f2 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
-        f2, v2 = Magpie.train!(f2, (ts, target); tspan, adam_iters=500, maxiters=300, λ=1/(20*2),
-                               shooting=Magpie.MultipleShooting(nsegments=8))
-        @info "Stage-2 contrast (multiple)" multiple=rmse(f2, v2)
-        @test rmse(f2, v2) < 0.5      # multiple shooting recovers (validated ≈0.39); single does not (~1.49)
-    end
-end
+# NOTE: the empirical single-vs-multiple-shooting RECOVERY contrast ("multiple recovers a long
+# horizon where single-shooting stalls") is a DEMONSTRATION, not a unit test — the multiple-shooting
+# *mechanism* is already covered by the gradient gate above (relerr ~1e-8, ∂loss/∂s0 live). It was
+# previously a ~10-min test double-gated behind MAGPIE_TEST_STAGE2_LH, which meant nothing ran it and
+# it silently rotted. Removed. The contrast is shown in a Phase-6 example on NOISY data (the NLL data
+# term's intended regime; on noise-free data NLL is a mismatched objective).
+# Measured noise-free numbers (Julia 1.12.6, 2026-06-21, seed 20, (0,6) LV ≈1.5 periods):
+#   single ≈ 1.34 (stalls),  multiple/8-seg ≈ 0.62 (recovers, 2.2× better).
+# The NLL objective (Phase 2) shifted these from the old SSE values (single ≈1.49 / multiple ≈0.39).

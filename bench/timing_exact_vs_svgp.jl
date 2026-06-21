@@ -7,17 +7,14 @@
 #
 # This is the number the scale_forcing example asserted without measuring.
 #
-# HOW TO RUN (must use the test env so OrdinaryDiffEq/SciMLSensitivity are available):
+# This is a standalone benchmark, run BY HAND (not a CI gate). It depends on
+# OrdinaryDiffEq/SciMLSensitivity (the package's test-only deps), so run it from an environment
+# where those are available — e.g. a throwaway env that has Magpie + the two SciML packages:
 #
-# The bench depends on OrdinaryDiffEq/SciMLSensitivity which are [extras] / test-only deps.
-# Run via the MAGPIE_BENCH gate in runtests.jl:
+#   julia -e 'using Pkg; Pkg.activate(; temp=true); Pkg.develop(path="."); \
+#             Pkg.add(["OrdinaryDiffEq","SciMLSensitivity"]); include("bench/timing_exact_vs_svgp.jl")'
 #
-#   MAGPIE_BENCH=true MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
-#
-# OR include directly from a Julia session that already `using OrdinaryDiffEq, SciMLSensitivity`:
-#
-#   julia --project=. -e 'using Pkg; Pkg.test(); include("bench/timing_exact_vs_svgp.jl")'
-#   (this is fragile — prefer the runtests gate above)
+# It keeps an internal @assert (SVGP allocs < Exact/2 at N=200) so a by-hand run self-checks.
 #
 # NOTE: This script is NOT in the default test suite (runtests.jl). It is slow and
 # timing-based. Opt-in: MAGPIE_BENCH=true alongside MAGPIE_TEST_SCIML=true.
