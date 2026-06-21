@@ -6,6 +6,15 @@ on:
   pull_request:
 
 jobs:
+  runic:
+    name: Runic formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fredrikekre/runic-action@v1
+        with:
+          version: '1'
+
   test:
     name: Julia ${{ matrix.julia-version }} — tests
     runs-on: ubuntu-latest
