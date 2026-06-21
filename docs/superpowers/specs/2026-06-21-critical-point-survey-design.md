@@ -1,4 +1,4 @@
-# Critical-Point Survey via Derivative-GP + Vector-Zero Acquisitions
+# Critical-Point Survey via Derivative-GP + Component Straddle
 
 **Date:** 2026-06-21
 **Status:** Design approved, pre-implementation
@@ -6,68 +6,73 @@
 
 ## Goal
 
-Demonstrate finding and **classifying all critical points** of a function `f: ℝ^d → ℝ`
-(minima, maxima, saddles) by treating the gradient `∇f` as a Gaussian-process-derived
-vector field and using an active-learning acquisition to localize its zeros
-`{x : ∇f(x) = 0}`. Each found point is labeled by **Morse index** (number of negative
-Hessian eigenvalues): `0 → min`, `d → max`, otherwise `saddle`.
+Find and **classify all critical points** of a function `f: ℝ^d → ℝ` (minima, maxima,
+saddles) by treating the gradient `∇f` as a Gaussian-process-derived vector field and
+using an active-learning acquisition to localize its zeros `{x : ∇f(x) = 0}`. Each found
+point is labeled by **Morse index** (number of negative Hessian eigenvalues):
+`0 → min`, `d → max`, otherwise `saddle`.
 
-This is the topology-of-the-critical-set capability that plain Bayesian optimization
-does not provide.
+Single acquisition, single deliverable: locate the critical points and classify them.
+No acquisition comparison (see "Scope" below).
 
-## Prior-art grounding (honesty about what is/isn't novel)
+## Prior-art grounding
 
-The core mechanism is **not novel** — and that is fine for an example, it means we
-follow a citable method rather than invent one:
+The core mechanism is **not novel** — and that is fine for an example; it means we
+follow a citable method rather than invent one.
 
 - **Inatsu, Sugita, Toyoura, Takeuchi (2020), "Active Learning for Enumerating Local
   Minima Based on Gaussian Process Derivatives," *Neural Computation* 32(10).** Models
   `f` with a GP, derives the `∇f` process analytically (f-values observed, gradients
-  *not* observed), builds confidence intervals on each `∇f` component and on the
-  Hessian `λ_min`, and actively samples to enumerate `{∇f=0 ∧ λ_min>0}`. Explicitly
-  notes saddles/maxima follow by changing the Hessian condition. 2–3D experiments.
-  Same author as the `RandStraddle` (2024) already in this package — clean lineage.
+  *not* observed), and actively samples using confidence intervals on the `∇f`
+  components and on the Hessian `λ_min` to enumerate `{∇f=0 ∧ λ_min>0}`. §4.2 explicitly
+  states the method extends to saddles/maxima by changing the Hessian condition (no
+  experiment shown). Same author as the `RandStraddle` (2024) already in this package.
 - **Scalar level-set lineage:** Bryan & Schneider (2005, Straddle) → Gotovos/Krause
-  (2013, LSE with confidence-bound classification) → Inatsu (2024, randomized
-  straddle). This package already implements `Straddle`, `RandStraddle`.
+  (2013, LSE confidence-bound classifier) → Inatsu (2024, randomized straddle). This
+  package already implements `Straddle`, `RandStraddle`.
 - **Chemistry (Jónsson/Koistinen 2017–2026, GP-NEB / GP-dimer):** mature derivative-GP
   saddle search, but finds *one* saddle per run via path topology; never enumerates or
   classifies.
 
-**What this example does that the literature has not combined:** classify **all** Morse
-indices in a single sweep (Inatsu enumerates one type at a time), and — Phase 2 — fold
-in gradient observations. A recombination near the frontier, not a toy.
+**How this example relates.** We *demonstrate* what Inatsu's framework covers but did
+not run — finding **all** critical-point types in one sweep and classifying by Morse
+index — using the simpler **Bryan-Straddle heuristic** on the gradient components
+(`βσᵢ − |μᵢ|`) rather than Inatsu's CI-classifier, and classifying post-hoc from the
+posterior-mean Hessian. Honest framing: a faithful-in-spirit demonstration with a
+heuristic acquisition, not a reproduction of Inatsu's CI machinery or its guarantees.
 
-### Same as Inatsu / different / extension
+### Same as Inatsu / different / not attempted
 
 - **Same:** f-only observation + analytic `∇f` process; per-component treatment of the
-  gradient; Hessian-eigenvalue classification test; active loop to enumerate; low-D.
-- **Different (a deliberate, disclosed substitution):** Inatsu's acquisition is a
-  confidence-interval *classifier* (Gotovos lineage) with PAC-style guarantees; we
-  *also* offer a Bryan-style component-Straddle heuristic, and compare the two. We use
-  the posterior-**mean** Hessian for classification (not Inatsu's `λ_min` CI) in the
-  first pass.
-- **Extension:** full Morse-index labeling in one sweep.
+  gradient; Hessian-eigenvalue classification; active loop to enumerate; low-D.
+- **Different:** Bryan-Straddle heuristic acquisition (not the Gotovos/Inatsu
+  CI-classifier — note the per-component LSE ambiguity at threshold 0 *equals* the
+  straddle score, so the genuine distinction is the `λ_min` CI, which we do not build);
+  posterior-**mean** Hessian for classification (not a `λ_min` confidence interval);
+  classify all Morse indices post-hoc rather than targeting one type.
+- **Not attempted (deferred):** the `λ_min` confidence interval, the CI-classifier
+  acquisition, any acquisition A/B, and gradient observations (Phase 2).
 
 ## Why component-wise (not a norm)
 
-`E‖∇f‖² = ‖μ_∇‖² + tr(Σ_∇)` is a fine post-hoc *confidence score* but a poor
-*acquisition*: both terms are positive, so minimizing it flees uncertainty and
-maximizing it chases large gradients — neither gives explore/exploit tension. And
-straddling the scalar field `g=‖∇f‖²` at level 0 is degenerate: `g≥0` so `0` is its
-minimum, touched tangentially, never crossed transversally.
+`E‖∇f‖² = ‖μ_∇‖² + tr(Σ_∇)` is a poor *acquisition*: both terms are positive, so
+minimizing it flees uncertainty and maximizing it chases large gradients — neither gives
+explore/exploit tension. Straddling the scalar field `g=‖∇f‖²` at level 0 is degenerate:
+`g≥0`, so `0` is its minimum, touched tangentially (`∇g=2H∇f→0` at `x*`), never crossed
+transversally.
 
 Component-wise works because near a nondegenerate critical point `x*`,
-`∇f(x) ≈ H(x−x*)`, so **each** `∂f/∂xᵢ` crosses zero *transversally* through a
-`(d−1)`-surface; the critical point is the intersection of those `d` surfaces. This
-decomposes the hard codim-`d` isolated-zero problem into `d` well-posed codim-1
-level-set problems the existing `Straddle` machinery already solves.
+`∇f(x) ≈ H(x−x*)`, so **each** `∂f/∂xᵢ` is affine and crosses zero *transversally*
+through a `(d−1)`-surface; the `d` independent surfaces meet in the single point `x*`.
+This decomposes the hard codim-`d` isolated-zero problem into `d` well-posed codim-1
+level-set problems the existing `Straddle` machinery already solves. (FD- and
+sweep-verified by review.)
 
 ## Architecture
 
 Module is `Magpie`. `ExactGP` fields (`prior, x, δ, C, α, noise`) are package-internal
-and used directly. Prior kernel is `with_lengthscale(SqExponentialKernel(), ℓ)` (RBF,
-unit variance), `ℓ = _lengthscale(g.prior.kernel)`.
+and used directly. Prior kernel is `with_lengthscale(SqExponentialKernel(), ℓ)` →
+`k(x,x')=exp(−‖x−x'‖²/(2ℓ²))`, unit variance, `ℓ = _lengthscale(g.prior.kernel)`.
 
 ### 1. Derivative-predict helper (`src/`, new) — the only new numeric piece
 
@@ -75,82 +80,86 @@ Given an `ExactGP` (RBF) and query `x ∈ ℝ^d`, return:
 
 - `μ_∇(x) ∈ ℝ^d` — posterior-mean gradient = `(∂ₓ k(x, X)) · α`
 - `diag Σ_∇(x) ∈ ℝ^d` — marginal posterior variance of each `∂f/∂xᵢ`
-  = `∂²ᵢᵢ k(x,x) − (∂ᵢ k(x,X)) C⁻¹ (∂ᵢ k(x,X))ᵀ` (reuses cached `C`)
+  = `1/ℓ² − diag( Ksᵀ C⁻¹ Ks )`, computed via the existing `diag_Xt_invA_X(C, Ks)`
 - `H̄(x) ∈ ℝ^{d×d}` — posterior-mean Hessian = `(∂²ₓ k(x, X)) · α`
 
-RBF derivative blocks (unit variance, lengthscale `ℓ`), with `r = x − x'`:
+RBF derivative blocks (unit variance, lengthscale `ℓ`), with `r = x − x'` (review-verified):
 - `∂k/∂xᵢ = −(rᵢ/ℓ²) k`
-- `∂²k/∂xᵢ∂xⱼ = k · [ rᵢrⱼ/ℓ⁴ − δᵢⱼ/ℓ² ]` (this is the Hessian block w.r.t. the
-  *query*; for `Σ_∇` we need the `∂²/∂xᵢ∂x'ⱼ` cross-block
-  `k·[δᵢⱼ/ℓ² − rᵢrⱼ/ℓ⁴]`, evaluated at `x=x'` giving `δᵢⱼ/ℓ²` for the prior term).
+- query-Hessian `∂²k/∂xᵢ∂xⱼ = k · [ rᵢrⱼ/ℓ⁴ − δᵢⱼ/ℓ² ]`
+- mixed `∂²k/∂xᵢ∂x'ⱼ = k · [ δᵢⱼ/ℓ² − rᵢrⱼ/ℓ⁴ ]` → `δᵢⱼ/ℓ²` at `x=x'` (prior grad-var `1/ℓ²`)
 
-**ponytail:** RBF only; hardcode the derivative algebra. Generalize to other kernels
-only when a second kernel actually needs it.
+**Shape note (review):** for `diag_Xt_invA_X(C, Ks)` the cross-cov `Ks` must be `n×d`
+with column `i` = the length-`n` vector `∂ᵢk(x,X)`. The `∂k` block falls out `d×n`, so
+`permutedims` it. This is the single-query form → loop over query points.
 
-### 2. Two gradient acquisitions (`src/acquisitions.jl`, new) over the helper
+**ponytail:** RBF only; hardcode the derivative algebra. Generalize only when a second
+kernel actually needs it.
 
-Both are `AcquisitionFunction` callables `(g, x)`; differ only in scoring:
+### 2. `GradStraddle` acquisition (`src/acquisitions.jl`, new)
 
-- `GradStraddle(; β)` — component Straddle:
-  `score(x) = minᵢ [ β·√(Σ_∇)ᵢᵢ − |μ_∇,ᵢ(x)| ]`. The `min` enforces the AND
-  (high only where *every* component is near-zero AND uncertain). Reuses the package's
-  existing Straddle idea on the gradient components.
-- `GradLSE(; β)` — Inatsu CI-classifier, **fidelity (b) "pragmatic"**: classify a point
-  as a critical-candidate iff `0 ∈ [μ_∇,ᵢ ± β√(Σ_∇)ᵢᵢ]` for all `i`; acquire the most
-  *ambiguous* unclassified point (largest summed CI half-width among candidates near the
-  boundary). CIs on gradient components only (exact-Gaussian, cheap). **Deferred (a):**
-  add a CI on `λ_min` (needs the Hessian posterior *distribution*, sampled) for full
-  Inatsu fidelity.
+An `AcquisitionFunction` callable `(g, x)` (parallels `Straddle`'s `(g,x)` form):
+
+```
+score(x) = ∑ᵢ [ β·√(Σ_∇)ᵢᵢ − |μ_∇,ᵢ(x)| ]
+```
+
+**Sum, not min** (review): `min` is dominated by the most-resolved component and starves
+half-resolved critical points (one component pinned to 0, another still uncertain → the
+`min` abandons the point). The sum keeps explore/exploit tension on every component, and
+each term still penalizes distance-from-zero per component (large `|μᵢ|` → negative
+contribution). Plugs into the existing `acquire(g, a; over=Box)` and `ActiveLearner` with
+no loop changes.
 
 ### 3. Active loop (reused)
 
-`ActiveLearner`: seed → `acquire` (via the chosen gradient acquisition over a `Box`)
-→ `observe!` f → `fit!` → repeat to budget. No loop changes.
+`ActiveLearner`: seed → `acquire` (via `GradStraddle` over a `Box`) → `observe!` f →
+`fit!` → repeat to budget via `run!(al, f; budget, over)`. No loop changes.
 
 ### 4. Extract + classify (exemplar-side helper)
 
-After the budget: on a fine grid, keep points where all `d` component CIs contain 0
-(candidates), cluster, polish each with a few Newton steps on the GP-mean gradient
-(`x ← x − H̄⁻¹ μ_∇`), then classify by Morse index from `eigvals(H̄)`. Report
-`E‖∇f‖² = ‖μ_∇‖² + tr Σ_∇` as the per-point confidence score.
+After the budget:
+1. On a fine grid, keep points where all `d` component CIs contain 0
+   (`|μ_∇,ᵢ| ≤ β√(Σ_∇)ᵢᵢ` ∀i) — the candidate set.
+2. Polish each candidate with a few Newton steps on the GP-mean gradient: solve the
+   linear system `H̄ \ μ_∇` (do **not** form `H̄⁻¹`); clamp / fall back to gradient
+   descent on `∑|μ_∇,ᵢ|` if `H̄` is near-singular.
+3. Deduplicate polished points: `unique(round.(x; digits=2))` within tolerance ε. (No
+   clustering — the 9 Himmelblau points are >1 apart; clustering would do nothing.)
+4. Classify each by Morse index from `eigvals(Symmetric(H̄))` (guaranteed real). Label
+   only when `|λ| > ε_morse` (e.g. `1e-3`) for all eigenvalues; otherwise report
+   "unclassified" rather than risk a wrong label on a borderline Hessian.
 
 ### 5. Validation = the one runnable check (`test/`, exemplar)
 
-**Himmelblau** `f=(x²+y−11)²+(x+y²−7)²` on `[−5,5]²`: **9 critical points with known
-analytic locations** — 4 minima (value 0), 1 maximum `(−0.2708,−0.9230)`, 4 saddles.
-Observe f only, run the loop, assert all 9 recovered near analytic locations with
-correct Morse index. Run the same assertion for **both** `GradStraddle` and `GradLSE`
-(the Phase-1 A/B comparison).
+**Himmelblau** `f=(x²+y−11)²+(x+y²−7)²` on `[−5,5]²`: **9 critical points, known analytic
+locations** — 4 minima (f=0; ≈(3,2),(−2.805,3.131),(−3.779,−3.283),(3.584,−1.848)), 1
+maximum at (−0.2708,−0.9230) (f≈181.6), 4 saddles. Observe f only, run the loop with
+`GradStraddle`, assert all 9 recovered near analytic locations with correct Morse index.
+(Ground truth confirmed by independent Newton sweep during review.)
 
-## Comparison study (two axes, phased one at a time)
+## Scope
 
-- **Phase 1 (f-only):** acquisition flavor — `GradStraddle` vs `GradLSE`. Same data, GP,
-  extractor; only the acquisition swaps.
-- **Phase 2:** observation mode — f-only vs f+∇f. Requires derivative *observations* in
-  the Gram matrix (a `(1+d)n × (1+d)n` augmented system, noticeably ill-conditioned —
-  needs a gradient-likelihood noise floor; GPyTorch ships a warning on its
-  `RBFKernelGrad`). Bigger change; **deferred** until Phase 1 lands.
+- **In:** the derivative-predict helper, `GradStraddle`, the find+classify pipeline, the
+  Himmelblau exemplar.
+- **Out (deferred, referenced as prior art only):** the `λ_min` confidence interval and
+  a CI-classifier (`GradLSE`) acquisition; any acquisition A/B comparison; gradient
+  observations (`f+∇f`, a `(1+d)n` augmented ill-conditioned Gram matrix — Phase 2);
+  kernels other than RBF; promoting the extract/classify helper into `src/` (do that only
+  if a second consumer appears).
 
 ## Placement
 
-- `src/`: derivative-predict helper + `GradStraddle` + `GradLSE` (real reusable
-  Capability-A additions — the existing acquisition set is not closed).
-- `test/`: Himmelblau exemplar with the A/B comparison and Morse-index assertions.
-- Package `src/` for Phase 2 (derivative-observation GP) untouched until Phase 1 is done.
+- `src/`: the derivative-predict helper + `GradStraddle` (a real reusable Capability-A
+  addition; the helper lives wherever the acquisition lives — `src/acquisitions.jl` or a
+  small companion file).
+- `test/`: the Himmelblau exemplar with the find+classify assertion.
 
 ## Open items to verify during implementation
 
-- Whether the RBF `∂k` algebra composes cleanly with how `g.x` stores inputs (vector of
-  points) and `AbstractGPs.cov(g.prior, xs, g.x)`; may need to map over training points.
-- Conditioning of `Σ_∇` near data-dense regions (a noise floor / `check=false` Cholesky
-  is already house style via `_chol`).
-- Newton polish robustness when `H̄` is near-singular (clamp / fall back to gradient
-  descent on `‖μ_∇‖`).
-
-## Deferred (explicitly not in this pass)
-
-- `GradLSE` fidelity (a): `λ_min` confidence interval (sampled Hessian posterior).
-- Phase 2: f+∇f derivative observations.
-- Kernels other than RBF.
-- Promoting the extract/classify helper from the exemplar into `src/` (do it only if a
-  second consumer appears).
+- `Ks` shape (`n×d`, component-indexed columns) and the per-query loop for `Σ_∇`.
+- Conditioning of `Σ_∇` in data-dense regions (`_chol`'s `check=false` already guards
+  tiny-negative pivots; add a noise floor if needed).
+- Newton-polish robustness near singular `H̄` (linear solve + clamp/GD fallback;
+  `ε_morse` classification threshold to avoid mislabeling).
+- Whether the active loop places enough data near saddles/maximum (not just minima) for
+  the mean Hessian to classify them correctly — if not, increase budget or seed coverage.
