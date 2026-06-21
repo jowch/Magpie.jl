@@ -16,4 +16,7 @@ using Test
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_svgp_mo.jl")
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_noise.jl")
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_pull.jl")
+    # Bench: timing crossover ExactGPField vs SVGPField (slow, opt-in; requires MAGPIE_TEST_SCIML=true)
+    (get(ENV,"MAGPIE_BENCH","")=="true" && get(ENV,"MAGPIE_TEST_SCIML","")=="true") &&
+        include(joinpath(@__DIR__, "..", "bench", "timing_exact_vs_svgp.jl"))
 end

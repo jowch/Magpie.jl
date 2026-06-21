@@ -55,10 +55,14 @@ if get(ENV, "MAGPIE_TEST_STAGE2_LH", "") == "true"
             sqrt(2σ2*(nll - (Nd/2)*log(2π*σ2)) / Nd)
         end
 
-        # single shooting (advisory baseline — it fails this horizon, ~1.49; not asserted, seed-dependent)
+        # single shooting FAILS this horizon — seed-fixed to Random.seed!(20) above; validated ≈1.49.
+        # Threshold 1.0 has >0.5 margin below the validated value; if the seed produces rmse < 1.0
+        # (e.g. due to solver tolerance drift), demote to @info and document here.
         f1 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
         f1, v1 = Magpie.train!(f1, (ts, target); tspan, adam_iters=500, maxiters=300, λ=1/(20*2))
-        @info "Stage-2 contrast (single)" single=rmse(f1, v1)
+        single_rmse = rmse(f1, v1)
+        @info "Stage-2 contrast (single)" single=single_rmse
+        @test single_rmse > 1.0   # single-shooting stalls on (0,6) ≈ 1.5 LV periods (validated ≈1.49)
 
         # multiple shooting: 8 segments recovers this horizon (single does not)
         f2 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
