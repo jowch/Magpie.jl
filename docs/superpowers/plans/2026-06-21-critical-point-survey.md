@@ -24,13 +24,13 @@
 
 **Files:**
 - Create: `src/derivatives.jl`
-- Modify: `src/Magpie.jl` (add `include("derivatives.jl")` **immediately before** `include("acquisitions.jl")`, since `GradStraddle` will call `grad_predict`)
+- Modify: `src/Magpie.jl` (prepend `include("derivatives.jl"); ` to the start of line 31 — the `include("acquisitions.jl"); …` line — so it loads after `fit.jl` on line 30, which provides `_lengthscale`, and before `acquisitions.jl`, which needs `grad_predict`)
 - Test: `test/test_derivatives.jl`
 - Modify: `test/runtests.jl` (register `test_derivatives.jl`)
 
 **Interfaces:**
 - Consumes: `ExactGP` fields `prior, x, C, α`; `_lengthscale`; `diag_Xt_invA_X` (already imported in `Magpie.jl`).
-- Produces: `grad_predict(g::ExactGP, x::AbstractVector) -> (μ∇::Vector, Σdiag::Vector, H::Matrix)` where `μ∇`,`Σdiag` are length-`d` and `H` is `d×d` symmetric.
+- Produces: `grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool=true) -> (μ∇::Vector, Σdiag::Vector, H)` where `μ∇`,`Σdiag` are length-`d`; `H` is the `d×d` symmetric mean Hessian, or `nothing` when `hessian=false` (skips the Hessian accumulation — used by `GradStraddle` and the candidate filter, which need only `μ∇`/`Σdiag`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -38,6 +38,7 @@
 # test/test_derivatives.jl
 using Magpie, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test, ForwardDiff
 using Magpie: ExactGP, grad_predict, predmean, _lengthscale, update
+# (LinearAlgebra provides the `norm`/`eigvals`/`Symmetric`/`I` used by later tasks)
 
 @testset "grad_predict matches ForwardDiff on the posterior mean" begin
     Random.seed!(3)
@@ -78,10 +79,10 @@ Math (k(x,x')=exp(−‖x−x'‖²/2ℓ²), r=x−Xⱼ):
   ∂²k/∂xᵢ∂xⱼ       = k(rᵢrⱼ/ℓ⁴ − δᵢⱼ/ℓ²)        (query Hessian)
   Var[∂ᵢf] prior   = 1/ℓ²,  posterior = 1/ℓ² − (∂ᵢk(x,X)) C⁻¹ (∂ᵢk(x,X))ᵀ
 """
-function grad_predict(g::ExactGP, x::AbstractVector)
+function grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool=true)
     d = length(x); ℓ = _lengthscale(g.prior.kernel)
     if isempty(g.x)                       # no data → prior
-        return (zeros(d), fill(1/ℓ^2, d), zeros(d, d))
+        return (zeros(d), fill(1/ℓ^2, d), hessian ? zeros(d, d) : nothing)
     end
     n = length(g.x)
     G = Matrix{Float64}(undef, d, n)      # Gᵢⱼ = ∂ᵢk(x, Xⱼ)
@@ -90,22 +91,26 @@ function grad_predict(g::ExactGP, x::AbstractVector)
         Xj = g.x[j]; r = x .- Xj
         kj = g.prior.kernel(x, Xj)        # scalar RBF value (lengthscale baked in)
         @views G[:, j] .= .-(r ./ ℓ^2) .* kj
-        Hsum .+= (g.α[j] * kj) .* (r * r')
-        s += g.α[j] * kj
+        if hessian                        # skip O(n·d²) Hessian work on the acquisition hot path
+            Hsum .+= (g.α[j] * kj) .* (r * r')
+            s += g.α[j] * kj
+        end
     end
     μ∇ = G * g.α
-    Σdiag = (1/ℓ^2) .- diag_Xt_invA_X(g.C, permutedims(G))   # permutedims → n×d
-    H = Hsum ./ ℓ^4 .- (s/ℓ^2) .* Matrix(I, d, d)
-    return (μ∇, max.(Σdiag, 0.0), Symmetric(H) |> Matrix)
+    Σdiag = max.((1/ℓ^2) .- diag_Xt_invA_X(g.C, permutedims(G)), 0.0)   # permutedims → n×d
+    H = hessian ? Matrix(Symmetric(Hsum ./ ℓ^4 .- (s/ℓ^2) .* Matrix(I, d, d))) : nothing
+    return (μ∇, Σdiag, H)
 end
 ```
 
-Then in `src/Magpie.jl`: add `include("derivatives.jl")` immediately before the existing `include("acquisitions.jl")` line (verify with `grep -n 'include(' src/Magpie.jl`).
+Then in `src/Magpie.jl`: prepend `include("derivatives.jl"); ` to line 31 (currently `include("acquisitions.jl"); include("maximize.jl"); include("loop.jl")`). Verified order: line 30 loads `spine.jl`/`fit.jl`/`laplace.jl` (so `_lengthscale`, `ExactGP`, `diag_Xt_invA_X` are available); `derivatives.jl` must precede `acquisitions.jl` since `GradStraddle` calls `grad_predict`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `julia --project=. test/test_derivatives.jl`
 Expected: PASS (all assertions).
+
+Note (empirical gate): the `H ≈ ForwardDiff.hessian(u -> predmean(g,u), x)` assertion needs nested Duals through `AbstractGPs.cov` (the already-proven `test_acquisitions.jl:9` path only takes a *first* gradient). RBF is smooth so this should hold, but if `ForwardDiff.hessian` errors on the nested-Dual kernel evaluation, replace that one assertion with a central finite-difference Hessian of `predmean` (perturb each axis by `h=1e-4`); the `μ∇ ≈ ForwardDiff.gradient` assertion is on the proven path and stays.
 
 - [ ] **Step 5: Register and commit**
 
@@ -145,7 +150,7 @@ git commit -m "feat(critpoints): RBF derivative-predict helper (μ∇, Σ∇, H�
 end
 ```
 
-(Ensure `test/test_acquisitions.jl` already brings `ExactGP`, `GradStraddle`, `acquire`, `Box` into scope via its `using Magpie: …` line; add `GradStraddle` to that import list.)
+(No import-line edit needed: `test/test_acquisitions.jl:1-2` already does `using Magpie, …, ForwardDiff, Test` + `using Magpie: ExactGP, Straddle, RandStraddle, resample`. `acquire`/`Box` are exported (reached via the bare `using Magpie`), and `GradStraddle` becomes exported in Step 3 — so it too is in scope with no change to the explicit import list.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -172,7 +177,7 @@ on every component.
 struct GradStraddle{T<:Real} <: AcquisitionFunction; β::T; end
 GradStraddle(; β::Real=1.96) = GradStraddle(float(β))
 function (a::GradStraddle)(g, x)
-    μ∇, Σdiag, _ = grad_predict(g, x)
+    μ∇, Σdiag, _ = grad_predict(g, x; hessian=false)   # acquisition needs no Hessian
     return sum(a.β * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
 end
 ```
@@ -208,21 +213,24 @@ git commit -m "feat(critpoints): GradStraddle vector-zero acquisition"
 ```julia
 # test/test_exemplar_critpoints.jl
 using Magpie, AbstractGPs, KernelFunctions, LinearAlgebra, Random, Test
-using Statistics: mean
 using Magpie: ExactGP, GradStraddle, ActiveLearner, observe!, run!, posterior_gp,
               Box, grid_points, grad_predict, update
 
-"Newton-polish x0 toward a gradient zero of the GP-mean field; GD fallback near singular H̄."
-function _newton_polish(g, x0, box; iters::Int=10)
-    x = collect(float.(x0))
+"""
+Newton-polish x0 toward a gradient zero of the GP-mean field. Uses Levenberg–Marquardt
+damping `(H̄ + λ_damp·I) \\ μ∇` so the step stays well-defined through a near-singular
+Hessian (and never flips direction the way a raw gradient-descent fallback would near a
+maximum/saddle); reduces to Newton when H̄ is well-conditioned. Returns `(x, μ∇, H̄)` at
+the final iterate so callers can classify without recomputing `grad_predict`.
+"""
+function _newton_polish(g, x0, box; iters::Int=10, λ_damp::Real=1e-6)
+    x = collect(float.(x0)); μ∇, _, H = grad_predict(g, x)
     for _ in 1:iters
-        μ∇, _, H = grad_predict(g, x)
         norm(μ∇) < 1e-7 && break
-        λ = eigvals(Symmetric(H))
-        step = minimum(abs, λ) > 1e-6 ? Symmetric(H) \ μ∇ : 1e-2 .* μ∇  # GD fallback
-        x = clamp.(x .- step, box.lb, box.ub)
+        x = clamp.(x .- (Symmetric(H) + λ_damp*I) \ μ∇, box.lb, box.ub)
+        μ∇, _, H = grad_predict(g, x)
     end
-    return x
+    return (x, μ∇, H)
 end
 
 """
@@ -240,14 +248,13 @@ CI-classifier variant; this demo uses the simpler mean-Hessian point estimate.
 function critical_points(g, box; per_axis::Int=60, β::Real=1.96, ε_morse::Real=1e-3, res_tol::Real=1e-2)
     d = length(box.lb)
     cands = filter(grid_points(box; per_axis=per_axis)) do x
-        μ∇, Σ, _ = grad_predict(g, x)
+        μ∇, Σ, _ = grad_predict(g, x; hessian=false)
         all(abs(μ∇[i]) ≤ β*sqrt(Σ[i]) for i in 1:d)
     end
-    polished = [_newton_polish(g, x, box) for x in cands]
-    conv = filter(x -> norm(first(grad_predict(g, x))) < res_tol, polished)
-    uniq = unique(x -> round.(x; digits=1), conv)
-    return map(uniq) do x
-        H = grad_predict(g, x)[3]
+    polished = [_newton_polish(g, x, box) for x in cands]      # each: (x, μ∇, H)
+    conv = filter(p -> norm(p[2]) < res_tol, polished)         # reuse μ∇ from polish
+    uniq = unique(p -> round.(p[1]; digits=1), conv)           # dedupe by 0.1-bucketed point
+    return map(uniq) do (x, _, H)                              # reuse H from polish
         λ = eigvals(Symmetric(H))
         kind = any(<(ε_morse), abs.(λ)) ? :unclassified :
                count(<(0), λ) == 0 ? :min :
@@ -372,5 +379,7 @@ git commit -m "feat(critpoints): Himmelblau exemplar — recover & classify all 
 **Placeholder scan:** No TBD/“handle edge cases”/bare “write tests” — every code step shows full code. Task 4 Step 3 is explicit tuning guidance, not a placeholder. ✓
 
 **Type consistency:** `grad_predict -> (μ∇, Σdiag, H)` used identically in Tasks 2–4; `critical_points` NamedTuple fields `(:point,:kind,:λ)` consumed consistently in Task 4; `GradStraddle(; β)` signature stable. ✓
+
+**Deliberate deviations from the spec's illustrative code** (spec is design-intent; these are the concrete, review-improved choices): dedupe uses `digits=1` (0.1 bucket — safer against split-duplicates than the spec's illustrative `digits=2`, given `res_tol=1e-2`); the near-singular Hessian is handled by Levenberg–Marquardt damping rather than the spec's literal "gradient descent on `∑|μ_∇,ᵢ|`" (the raw GD direction descends `f`, not the residual, and would repel a maximum — LM is correct and shorter); `grad_predict` gains a `hessian=false` fast path for the acquisition. All preserve the spec's intent.
 
 **Known risk (surfaced, not hidden):** Task 4 recovery of the maximum and 4th saddle is the empirical unknown; mitigated by tunable budget and the `nsaddle ≥ 3` assertion margin. If tuning cannot recover the max within a ~200 budget, fall back to asserting `found(:max,…)` is reported via `@info` and relax to `n_found ≥ 8` — but try the budget ladder first.
