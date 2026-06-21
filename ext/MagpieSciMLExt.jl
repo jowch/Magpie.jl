@@ -59,6 +59,36 @@ function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw
     make_loss(field, L, u0, tspan, collect(t_data), u_data; kw...)
 end
 
+# Stage-2: multiple shooting. Splits trajectory into S segments with free per-segment initial nodes
+# + a continuity penalty λ. Layout: v = [logℓ, logσ, vec(w), vec(s0)] where s0 is d×S.
+function build_loss(field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
+                    ms::Magpie.MultipleShooting; known_physics=(u,t)->zero(u),
+                    solver=Tsit5(), λ=1.0, logℓ_ref=0.0, s=0.5,
+                    sensealg=DEFAULT_SENSEALG, kw...)
+    S = ms.nsegments
+    seg_idx = round.(Int, range(1, length(t_data); length=S+1))
+    seg_t   = [t_data[i] for i in seg_idx]
+    X       = u_data
+    rhs!(du, u, pf, t) = (du .= known_physics(u, t); du .+= gpfield(field, u, pf); nothing)
+    nwL = L.n * L.d   # nw(L) — computed locally (nw is not exported from Magpie)
+    return function loss(v)
+        h  = Magpie.hyp(L, v)
+        α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED
+        pf = vcat(h.logℓ, h.logσ, vec(α))
+        s0 = reshape(v[3+nwL : 2+nwL + field.d*S], field.d, S)   # [logℓ,logσ,vec(w),vec(s0)] → s0 after 2+nw
+        data = cont = zero(eltype(v))
+        for i in 1:S
+            sol  = solve(ODEProblem(rhs!, s0[:, i], (seg_t[i], seg_t[i+1]), pf), solver;
+                         saveat=[seg_t[i+1]], sensealg)
+            endp = Array(sol)[:, end]                         # R2: Array(sol) before indexing
+            data += sum(abs2, endp .- X[:, seg_idx[i+1]])
+            i < S && (cont += sum(abs2, endp .- s0[:, i+1]))
+        end
+        reg = λ * (h.logℓ - logℓ_ref)^2 / (2s^2)
+        return data + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1]) + reg
+    end
+end
+
 # ---------------------------------------------------------------------------
 # train!: optimizer driver — Optimization.jl + LBFGS, outer Mooncake
 # ---------------------------------------------------------------------------
