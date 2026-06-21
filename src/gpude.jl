@@ -72,6 +72,11 @@ end
 """Output-scaled squared-exponential kernel: `exp(2logσ) * SE(exp(logℓ))`."""
 _kernel(logℓ, logσ) = exp(2logσ) * with_lengthscale(SqExponentialKernel(), exp(logℓ))
 
+# Peel a ScaledKernel (exp(2logσ)*with_lengthscale(...)) to recover ℓ from the inner kernel.
+# The field kernel returned by _kernel is a ScaledKernel; _lengthscale in fit.jl handles the
+# inner TransformedKernel (with_lengthscale(...)); this peel forwards to that method.
+_lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
+
 # Layout accessors — trained vector is [logℓ, logσ, vec(w)]; lognoise lives on the field.
 nw(L::FieldLayout) = L.n * L.d
 hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2])

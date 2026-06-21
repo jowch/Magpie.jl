@@ -305,4 +305,115 @@ function pull_propagate(gps, u0, ts; buffer::Int=20)
     return μs, Σs
 end
 
+
+# ---------------------------------------------------------------------------
+# Stage-4: public `propagate` dispatch — PULL and Pathwise ensemble.
+# `Magpie.propagate` (QUALIFIED) extends the core stub declared in src/gpude.jl.
+# ---------------------------------------------------------------------------
+
+using Random: MersenneTwister
+
+# ---- ExactGP vector field -------------------------------------------------
+
+"""
+    propagate(gps, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
+
+Propagate uncertainty through a GP vector field (one `ExactGP` per output dimension).
+
+- `method=PULL()` — analytic moment-matching via `pull_propagate`.
+- `method=Pathwise(n=N)` — Monte-Carlo ensemble of `N` decoupled GP samples integrated as plain ODEs.
+
+Returns `(μs, Σs)` for PULL, or an `N × d × length(ts)` array for Pathwise.
+"""
+function Magpie.propagate(gps::AbstractVector{<:ExactGP}, u0, tspan;
+                          method=Magpie.PULL(),
+                          ts=collect(range(tspan...; length=21)),
+                          buffer=20)
+    method isa Magpie.PULL && return pull_propagate(gps, u0, ts; buffer)
+    return _pathwise(gps, u0, tspan, ts, method)
+end
+
+"""
+    propagate(field::ExactGPField, u0, tspan; kw...) -> (μs, Σs) | ensemble
+
+Reconstruct the posterior GPs from the trained field and dispatch to `propagate(gps, ...)`.
+"""
+Magpie.propagate(field::ExactGPField, u0, tspan; kw...) =
+    Magpie.propagate(Magpie.posterior_gps(field), u0, tspan; kw...)
+
+# Internal Pathwise integrator for ExactGP fields.
+function _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise)
+    d = length(u0); S = m.n
+    out = zeros(S, d, length(ts))
+    for sidx in 1:S
+        samplers = [begin
+            k = g.prior.kernel                                    # ScaledKernel (carries σ²)
+            ℓ = Magpie._lengthscale(k)                            # peel ScaledKernel → inner TransformedKernel
+            σ = sqrt(k(g.x[1], g.x[1]))                           # k(x,x) = σ² for stationary SE
+            # Draw a consistent inducing-value sample from the posterior at the anchors.
+            uvals = Magpie.mean(g, g.x) .+
+                    Magpie._chol(Magpie.cov(g, g.x) + 1e-8 * I).L *
+                    randn(MersenneTwister(sidx * 131 + i), length(g.x))
+            Magpie.build_decoupled_sample(k, g.x, uvals;
+                                          ℓ=ℓ, σ=σ,
+                                          rng=MersenneTwister(sidx * 131 + i))
+        end for (i, g) in enumerate(gps)]
+        rhs!(du, u, p, t) = (for i in 1:d; du[i] = samplers[i](u); end; nothing)
+        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts)
+        out[sidx, :, :] = Array(sol)
+    end
+    return out
+end
+
+# ---- SparseGP vector field -------------------------------------------------
+
+"""
+    propagate(sgps, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
+
+Propagate uncertainty through a sparse GP vector field (one `SparseGP` per output dimension).
+PULL uses `pull_propagate` (unchanged — `SparseGP` implements `predmean`/`var`/`cov`).
+Pathwise draws from the whitened variational posterior and integrates as plain ODEs.
+"""
+function Magpie.propagate(sgps::AbstractVector{<:SparseGP}, u0, tspan;
+                          method=Magpie.PULL(),
+                          ts=collect(range(tspan...; length=21)),
+                          buffer=20)
+    method isa Magpie.PULL && return pull_propagate(sgps, u0, ts; buffer)
+    return _pathwise_svgp(sgps, u0, tspan, ts, method)
+end
+
+"""
+    propagate(field::SVGPField, u0, tspan; kw...) -> (μs, Σs) | ensemble
+
+Reconstruct the sparse posterior GPs from the trained field and dispatch.
+"""
+Magpie.propagate(field::SVGPField, u0, tspan; kw...) =
+    Magpie.propagate(Magpie.posterior_sparsegps(field), u0, tspan; kw...)
+
+# Internal Pathwise integrator for SparseGP fields.
+# Draws each sample by: (1) drawing whitened v_s ~ N(μ_i, S), (2) lifting to u_s = L_ZZ v_s,
+# (3) building a decoupled sampler from inducing locations Z and values u_s.
+function _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise)
+    d = length(u0); out = zeros(m.n, d, length(ts))
+    for sidx in 1:m.n
+        samplers = [begin
+            k = g.prior.kernel
+            ℓ = Magpie._lengthscale(k)
+            σ = sqrt(k(g.Z[1], g.Z[1]))
+            # Recover variational mean μ_i from the stored α = L_ZZ' \ μ_i.
+            μ_i = g.L_ZZ' * g.α
+            # Draw whitened v_s ~ N(μ_i, S) where S = L_S L_S'.
+            v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i), length(μ_i))
+            # Lift to inducing-value sample u_s = L_ZZ v_s.
+            u_s = g.L_ZZ * v_s
+            Magpie.build_decoupled_sample(k, g.Z, u_s;
+                                          ℓ=ℓ, σ=σ,
+                                          rng=MersenneTwister(sidx * 977 + i))
+        end for (i, g) in enumerate(sgps)]
+        rhs!(du, u, p, t) = (for i in 1:d; du[i] = samplers[i](u); end; nothing)
+        out[sidx, :, :] = Array(solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts))
+    end
+    return out
+end
+
 end # module
