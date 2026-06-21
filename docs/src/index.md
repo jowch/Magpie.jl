@@ -35,7 +35,7 @@ Magpie builds on [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/Abst
 
 ## Examples
 
-See the [Examples](@ref) section for worked vignettes.
+See the **Examples** section in the navigation sidebar for worked vignettes.
 
 ## Install
 

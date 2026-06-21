@@ -168,7 +168,7 @@ scatter!(plt2, px1, py1;
     label = "BALD queries",
 )
 
-# ## Hidden assertions (build-only)
+# ## Hidden assertions (run when this file is executed directly; stripped from the rendered page)
 
 using Test  #src
 @test mb[end] > mr[end] + 0.05            #src

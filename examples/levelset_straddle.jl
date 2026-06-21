@@ -83,6 +83,7 @@ xs = range(-2, 2; length=50)
 ys = range(-2, 2; length=50)
 
 Z_mean = [predmean(g, [xi, yj]) for yj in ys, xi in xs]
+Z_true = [f([xi, yj]) for yj in ys, xi in xs]   ## the true signed-distance field
 
 pts = queried_points(al)
 px  = [p[1] for p in pts]
@@ -94,7 +95,8 @@ plt1 = heatmap(xs, ys, Z_mean;
     c      = :RdBu, clim = (-2, 2),
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
-contour!(plt1, xs, ys, Z_mean; levels=[0.0], lw=2, lc=:black, label="true h=0")
+## overlay the TRUE level set (zero contour of f), not the posterior's own contour
+contour!(plt1, xs, ys, Z_true; levels=[0.0], lw=2, lc=:black, label="true h=0")
 scatter!(plt1, px, py;
     ms     = 4,
     mc     = :white,
@@ -119,7 +121,7 @@ plt2 = heatmap(xs, ys, Z_acq;
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
 
-# ## Hidden assertions (build-only)
+# ## Hidden assertions (run when this file is executed directly; stripped from the rendered page)
 
 using Test  #src
 grid = grid_points(box; per_axis=50)                                             #src

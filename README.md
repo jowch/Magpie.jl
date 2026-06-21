@@ -102,7 +102,7 @@ is enabled.
 - **Acquisitions** (`Straddle`, `RandStraddle`, `BinaryBALD`) are differentiable functions
   of the posterior; **`acquire`** maximizes one over a `Box` or `Points` domain.
 
-## Where it fits
+## Ecosystem context
 
 Magpie builds on [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) and [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — it reuses their GP core and kernel library rather than reinventing them. For optimization-style infill (expected improvement, upper confidence bound, SRBF), [Surrogates.jl](https://github.com/SciML/Surrogates.jl) and [BayesianOptimization.jl](https://github.com/jbrea/BayesianOptimization.jl) are mature choices; they target minima. Magpie's active-learning acquisitions (Straddle, BinaryBALD) instead target level sets and classification boundaries — a different objective these packages don't aim at. For GP-as-ODE-field work, [GPDiffEq.jl](https://github.com/Crown421/GPDiffEq.jl) is the original proof of concept and deserves the credit; Magpie's Capability B (not yet built) continues that direction on a through-solver, Mooncake-trained path.
 
