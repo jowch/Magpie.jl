@@ -29,11 +29,16 @@ import StatsBase: mean_and_var
 
 include("spine.jl"); include("fit.jl"); include("laplace.jl")
 include("acquisitions.jl"); include("maximize.jl"); include("loop.jl")
+include("gpude.jl")
 
 export AbstractGPModel, ExactGP, update, predmean, predict, nlml
 export LaplaceGP
 export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, resample
 export Box, Points, SobolPolish, grid_points, acquire
 export ActiveLearner, observe!, fit!, run!, posterior_gp, queried_points, all_data
+export ExactGPField, SparseGP, SVGPField, FieldLayout, gpfield, solve_alpha, train!, propagate
+export posterior_gps, posterior_sparsegps
+export SingleShooting, MultipleShooting, PULL, Pathwise, DecoupledGPSample, kmeans_anchors
+export build_decoupled_sample
 
 end
