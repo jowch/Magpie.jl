@@ -53,11 +53,16 @@ end
     # Build loss via field_loss(CompositeField, SingleShooting, data)
     loss = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])
 
-    # Evaluate at a non-zero-weight point so ∂loss/∂w is live
-    v0 = copy(cf.v0)
+    # Evaluate at a point with small nonzero w-weights so the GP RHS is live and
+    # wnorm is bounded — at w=0 the GP term is zero so the FHN trajectory is governed
+    # only by `known`, producing huge gradients (wnorm≈39225) and inflating FD relerr
+    # into the 4e-3 range (only 14% margin below the 5e-3 ceiling).
+    rng = Random.MersenneTwister(42)
+    v_test = copy(cf.v0)
+    v_test[3:end] .= 0.01 .* randn(rng, length(v_test) - 2)
 
-    g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v0)
-    g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
+    g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v_test)
+    g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v_test)[1]
 
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
     wnorm  = norm(g_fd[3:end])   # w-block starts at index 3 (same layout as ExactGPField)
@@ -132,9 +137,16 @@ end
     @info "CompositeField train!" loss0 lossT
     @test lossT < loss0   # training reduced the loss
 
-    # (a) Trajectory RMSE: hard gate
-    sol_rmse = sqrt(lossT / (length(ts) * 2))
-    @info "CompositeField sol_rmse" sol_rmse
+    # (a) Trajectory RMSE: hard gate — solve the ODE at vopt and measure directly.
+    # Previously computed as sqrt(lossT/(N*d)) which INCLUDED the regularizer term,
+    # i.e. sqrt((data_mse + reg)/(N*d)), not true trajectory RMSE.
+    # Fix: integrate at vopt and compute sqrt(mean(abs2, Array(sol) .- target)).
+    pf_opt, rhs_opt! = ext.field_rhs(cf, vopt)
+    sol_opt = solve(ODEProblem((du, u, p, t) -> rhs_opt!(du, u, p, t), u0, tspan, pf_opt),
+                    Tsit5(); saveat=ts)
+    sol_arr = Array(sol_opt)
+    sol_rmse = size(sol_arr) == size(target) ? sqrt(mean(abs2, sol_arr .- target)) : Inf
+    @info "CompositeField sol_rmse (true trajectory RMSE)" sol_rmse
     @test sol_rmse < 0.5   # trajectory recovery (conservative threshold)
 
     # (b) Residual field error at visited states (advisory / loose)

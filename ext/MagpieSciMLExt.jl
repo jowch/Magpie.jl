@@ -53,7 +53,7 @@ wraps the returned closure so it does `du .= cf.known(u,t)` FIRST, then adds the
 The `known` closure is called every RHS evaluation but carries no trained params.
 """
 function field_rhs(cf::Magpie.CompositeField, v)
-    pf, inner_rhs! = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf
+    pf, _ = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf (inner closure unused — CompositeField rebuilds via gpfield)
     known = cf.known                         # do NOT closure-capture α or pf — only the fixed known fn
     function rhs!(du, u, _pf, t; known_physics=(u,t)->zero(u))
         du .= known(u, t)                    # known physics first (baked in; ignores kwarg known_physics)

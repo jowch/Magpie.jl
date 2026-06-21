@@ -38,6 +38,9 @@ regularizer(cf::CompositeField, v; kw...) = regularizer(cf.gp, v; kw...)
 
 # v0 accessor: CompositeField is transparent — its trained-vector layout IS the inner gp's.
 # (train! and _init_vec read field.v0 directly, so forward the property.)
+# NOTE on write-back: `field.v0 .= sol.u` (in-place broadcast) works because `.=` calls
+# getproperty to fetch the inner Vector, then mutates it in-place. A plain assignment
+# `field.v0 = sol.u` (no dot) would throw a MethodError (no setproperty! defined; YAGNI).
 Base.getproperty(cf::CompositeField, s::Symbol) =
     s === :known ? getfield(cf, :known) :
     s === :gp    ? getfield(cf, :gp)   :
