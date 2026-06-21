@@ -43,10 +43,10 @@ Field names follow Rasmussen & Williams (Algorithm 2.1).
 
 Build an unconditioned `ExactGP`; condition it on data with [`update`](@ref).
 """
-struct ExactGP{Tp,Tx,Tδ,TC,Tα} <: AbstractGPModel
+struct ExactGP{Tp, Tx, Tδ, TC, Tα} <: AbstractGPModel
     prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64
 end
-ExactGP(kernel::Kernel; noise::Real=1e-6, mean=AbstractGPs.ZeroMean()) =
+ExactGP(kernel::Kernel; noise::Real = 1.0e-6, mean = AbstractGPs.ZeroMean()) =
     ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise))
 
 # True once the GP has been conditioned on data (the Cholesky factor exists).
@@ -63,30 +63,30 @@ with). `check=false` tolerates roundoff-induced tiny-negative pivots when [`fit`
 probes extreme lengthscales under dual numbers. For an Enzyme/ChainRules backend,
 re-add `Matrix(...)` via a per-backend method here.
 """
-_chol(K) = cholesky(Symmetric(K); check=false)
+_chol(K) = cholesky(Symmetric(K); check = false)
 
 """Posterior mean at `xs`: prior mean `m(xs)` plus `cov(xs, x)·α` once conditioned."""
 function Statistics.mean(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
-    _hasdata(g) ? m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α : m
+    return _hasdata(g) ? m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α : m
 end
 
 """Posterior (marginal) variance at `xs`: prior variance minus the data-explained part."""
 function Statistics.var(g::ExactGP, xs::AbstractVector)
     v = AbstractGPs.var(g.prior, xs)
-    _hasdata(g) ? v .- diag_Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : v
+    return _hasdata(g) ? v .- diag_Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : v
 end
 
 # Posterior cross-covariance between two input sets `xs` and `ys`.
 function Statistics.cov(g::ExactGP, xs::AbstractVector, ys::AbstractVector)
     c = AbstractGPs.cov(g.prior, xs, ys)
-    _hasdata(g) ? c .- Xt_invA_Y(AbstractGPs.cov(g.prior, g.x, xs), g.C, AbstractGPs.cov(g.prior, g.x, ys)) : c
+    return _hasdata(g) ? c .- Xt_invA_Y(AbstractGPs.cov(g.prior, g.x, xs), g.C, AbstractGPs.cov(g.prior, g.x, ys)) : c
 end
 
 # Posterior covariance matrix within a single input set `xs`.
 function Statistics.cov(g::ExactGP, xs::AbstractVector)
     c = AbstractGPs.cov(g.prior, xs)
-    _hasdata(g) ? c .- Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : c
+    return _hasdata(g) ? c .- Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : c
 end
 
 """
@@ -104,7 +104,7 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
     δnew = y .- AbstractGPs.mean(g.prior, xnew)
     K = AbstractGPs.cov(g.prior, xnew) + g.noise * I
     C = _chol(K)
-    ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
+    return ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
 
@@ -154,5 +154,5 @@ function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
     Cext = update_chol(g.C, C12, C22)
     xall = vcat(g.x, xnew)
     δall = vcat(g.δ, y .- AbstractGPs.mean(g.prior, xnew))
-    ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise)
+    return ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise)
 end

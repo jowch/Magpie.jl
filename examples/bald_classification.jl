@@ -57,23 +57,25 @@ Xtest = [4 .* rand(2) .- 2 for _ in 1:400]
 ytest = label.(Xtest)
 acc(g) = sum((predmean(g, p) > 0) == yt for (p, yt) in zip(Xtest, ytest)) / length(Xtest)
 
-function learning_curve(seed; bald::Bool, B=40, ℓ=0.4)
+function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4)
     Random.seed!(seed)
     cold = [4 .* rand(2) .- 2 for _ in 1:10]    # paired: same seed ⇒ identical cold start for both arms
     al = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), ℓ)), BinaryBALD())
-    for x in cold; observe!(al, x, label(x)); end
+    for x in cold
+        observe!(al, x, label(x))
+    end
     accs = Float64[]
     for _ in 1:B
-        x = bald ? acquire(al; over=box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
+        x = bald ? acquire(al; over = box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
         observe!(al, x, label(x))
         push!(accs, acc(posterior_gp(al)))
     end
-    accs
+    return accs
 end
 
 SEEDS = 1:10
-bald_curves = [learning_curve(s; bald=true)  for s in SEEDS]
-rand_curves = [learning_curve(s; bald=false) for s in SEEDS]
+bald_curves = [learning_curve(s; bald = true)  for s in SEEDS]
+rand_curves = [learning_curve(s; bald = false) for s in SEEDS]
 mb = [mean(c[k] for c in bald_curves) for k in 1:40]   # mean BALD curve
 mr = [mean(c[k] for c in rand_curves) for k in 1:40]   # mean random curve
 sb = [std(c[k]  for c in bald_curves) for k in 1:40]   # ±1 SD for ribbons
@@ -98,25 +100,28 @@ sr = [std(c[k]  for c in rand_curves) for k in 1:40]
 # sampling (query wherever `σ(x)` is largest); that is a small acquisition to
 # add and would provide a tighter comparison than uniform random alone.
 
-plt1 = plot(mb;
-    ribbon   = sb,
-    label    = "BinaryBALD",
-    xlabel   = "queries (after cold start)",
-    ylabel   = "test accuracy",
-    title    = "Data efficiency: BinaryBALD vs random",
-    legend   = :bottomright,
-    ylims    = (0.5, 1.0),
+plt1 = plot(
+    mb;
+    ribbon = sb,
+    label = "BinaryBALD",
+    xlabel = "queries (after cold start)",
+    ylabel = "test accuracy",
+    title = "Data efficiency: BinaryBALD vs random",
+    legend = :bottomright,
+    ylims = (0.5, 1.0),
     linewidth = 2,
 )
-plot!(plt1, mr;
-    ribbon    = sr,
-    label     = "uniform random",
+plot!(
+    plt1, mr;
+    ribbon = sr,
+    label = "uniform random",
     linewidth = 2,
 )
-hline!(plt1, [0.80];
-    ls    = :dash,
-    lc    = :black,
-    lw    = 1,
+hline!(
+    plt1, [0.8];
+    ls = :dash,
+    lc = :black,
+    lw = 1,
     label = "80% target",
 )
 
@@ -135,15 +140,17 @@ hline!(plt1, [0.80];
 Random.seed!(1)
 cold1 = [4 .* rand(2) .- 2 for _ in 1:10]
 al1 = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.4)), BinaryBALD())
-for x in cold1; observe!(al1, x, label(x)); end
+for x in cold1
+    observe!(al1, x, label(x))
+end
 for _ in 1:40
-    x = acquire(al1; over=box)
+    x = acquire(al1; over = box)
     observe!(al1, x, label(x))
 end
 g1 = posterior_gp(al1)
 
-xs = range(-2, 2; length=50)
-ys = range(-2, 2; length=50)
+xs = range(-2, 2; length = 50)
+ys = range(-2, 2; length = 50)
 
 Z_mean = [predmean(g1, [xi, yj]) for yj in ys, xi in xs]
 
@@ -151,20 +158,22 @@ Z_mean = [predmean(g1, [xi, yj]) for yj in ys, xi in xs]
 Z_check = [sin(2xi) * sin(2yj) for yj in ys, xi in xs]
 
 pts1 = queried_points(al1)
-px1  = [p[1] for p in pts1]
-py1  = [p[2] for p in pts1]
+px1 = [p[1] for p in pts1]
+py1 = [p[2] for p in pts1]
 
-plt2 = heatmap(xs, ys, Z_mean;
-    title        = "Latent posterior mean, seed 1 (40 BALD queries)",
-    xlabel       = "x₁", ylabel = "x₂",
-    c            = :RdBu,
+plt2 = heatmap(
+    xs, ys, Z_mean;
+    title = "Latent posterior mean, seed 1 (40 BALD queries)",
+    xlabel = "x₁", ylabel = "x₂",
+    c = :RdBu,
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
-contour!(plt2, xs, ys, Z_check; levels=[0.0], lw=2, lc=:black, label="true boundary")
-scatter!(plt2, px1, py1;
-    ms    = 4,
-    mc    = :white,
-    msw   = 1,
+contour!(plt2, xs, ys, Z_check; levels = [0.0], lw = 2, lc = :black, label = "true boundary")
+scatter!(
+    plt2, px1, py1;
+    ms = 4,
+    mc = :white,
+    msw = 1,
     label = "BALD queries",
 )
 
@@ -172,7 +181,7 @@ scatter!(plt2, px1, py1;
 
 using Test  #src
 @test mb[end] > mr[end] + 0.05            #src
-qb = findfirst(>=(0.80), mb)              #src
+qb = findfirst(>=(0.8), mb)              #src
 @test qb !== nothing && qb <= 35          #src
-@test findfirst(>=(0.80), mr) === nothing #src
+@test findfirst(>=(0.8), mr) === nothing #src
 @test sum(bald_curves[s][end] > rand_curves[s][end] for s in eachindex(SEEDS)) >= 8  #src

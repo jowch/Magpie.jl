@@ -46,8 +46,8 @@ f(x) = norm(x) - 1.0   ## signed distance to the unit circle
 # targeting `h = 0`.
 
 al = ActiveLearner(
-    ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise=1e-4),
-    Straddle(h=0.0),
+    ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4),
+    Straddle(h = 0.0),
 )
 
 # ## Cold start
@@ -68,7 +68,7 @@ end
 # 10 steps.  The first call to `fit!` after the cold start sets the kernel
 # parameters; subsequent refits keep them current as new data arrive.
 
-run!(al, f; budget=40, over=box, refit_every=10)
+run!(al, f; budget = 40, over = box, refit_every = 10)
 
 # ## Results
 
@@ -80,29 +80,31 @@ g = posterior_gp(al)
 # point.  Overlay the true level set (`contour!` at `levels=[0.0]`) and mark
 # every point the active learner queried.
 
-xs = range(-2, 2; length=50)
-ys = range(-2, 2; length=50)
+xs = range(-2, 2; length = 50)
+ys = range(-2, 2; length = 50)
 
 Z_mean = [predmean(g, [xi, yj]) for yj in ys, xi in xs]
 Z_true = [f([xi, yj]) for yj in ys, xi in xs]   ## the true signed-distance field
 
 pts = queried_points(al)
-px  = [p[1] for p in pts]
-py  = [p[2] for p in pts]
+px = [p[1] for p in pts]
+py = [p[2] for p in pts]
 
-plt1 = heatmap(xs, ys, Z_mean;
-    title  = "GP posterior mean",
+plt1 = heatmap(
+    xs, ys, Z_mean;
+    title = "GP posterior mean",
     xlabel = "x₁", ylabel = "x₂",
-    c      = :RdBu, clim = (-2, 2),
+    c = :RdBu, clim = (-2, 2),
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
 ## overlay the TRUE level set (zero contour of f), not the posterior's own contour
-contour!(plt1, xs, ys, Z_true; levels=[0.0], lw=2, lc=:black, label="true level set (h = 0)")
-scatter!(plt1, px, py;
-    ms     = 4,
-    mc     = :white,
-    msw    = 1,
-    label  = "queries",
+contour!(plt1, xs, ys, Z_true; levels = [0.0], lw = 2, lc = :black, label = "true level set (h = 0)")
+scatter!(
+    plt1, px, py;
+    ms = 4,
+    mc = :white,
+    msw = 1,
+    label = "queries",
 )
 
 # ### Figure 2 — Straddle acquisition surface
@@ -115,18 +117,19 @@ a = al.acq   ## the Straddle functor, already holds h=0.0
 
 Z_acq = [a(g, [xi, yj]) for yj in ys, xi in xs]
 
-plt2 = heatmap(xs, ys, Z_acq;
-    title  = "Straddle acquisition",
+plt2 = heatmap(
+    xs, ys, Z_acq;
+    title = "Straddle acquisition",
     xlabel = "x₁", ylabel = "x₂",
-    c      = :viridis,
+    c = :viridis,
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
 
 # The example's correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.
 
 using Test  #src
-grid = grid_points(box; per_axis=50)                                             #src
+grid = grid_points(box; per_axis = 50)                                             #src
 recovery = sum(sign(predmean(g, p)) == sign(f(p)) for p in grid) / length(grid) #src
 @test recovery > 0.95                                                            #src
 @test sum(abs(f(p)) < 0.2 for p in queried_points(al)) /                        #src
-      length(queried_points(al)) > 0.5                                          #src
+    length(queried_points(al)) > 0.5                                          #src
