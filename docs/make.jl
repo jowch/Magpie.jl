@@ -8,6 +8,7 @@ const GENDIR = joinpath(@__DIR__, "src", "generated")
 const EXAMPLES = Tuple{String,String}[]
 
 push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))
+push!(EXAMPLES, ("Decision boundary (BinaryBALD)", "bald_classification.jl"))
 
 isdir(GENDIR) && rm(GENDIR; recursive=true)
 mkpath(GENDIR)
