@@ -11,23 +11,25 @@ Xtest = [4 .* rand(2) .- 2 for _ in 1:400]
 ytest = label.(Xtest)
 acc(g) = sum((predmean(g, p) &gt; 0) == yt for (p, yt) in zip(Xtest, ytest)) / length(Xtest)
 
-function learning_curve(seed; bald::Bool, B=40, ℓ=0.4)
+function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4)
     Random.seed!(seed)
     cold = [4 .* rand(2) .- 2 for _ in 1:10]    # paired: same seed ⇒ identical cold start for both arms
     al = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), ℓ)), BinaryBALD())
-    for x in cold; observe!(al, x, label(x)); end
+    for x in cold
+        observe!(al, x, label(x))
+    end
     accs = Float64[]
     for _ in 1:B
-        x = bald ? acquire(al; over=box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
+        x = bald ? acquire(al; over = box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
         observe!(al, x, label(x))
         push!(accs, acc(posterior_gp(al)))
     end
-    accs
+    return accs
 end
 
 SEEDS = 1:10
-bald_curves = [learning_curve(s; bald=true)  for s in SEEDS]
-rand_curves = [learning_curve(s; bald=false) for s in SEEDS]
+bald_curves = [learning_curve(s; bald = true)  for s in SEEDS]
+rand_curves = [learning_curve(s; bald = false) for s in SEEDS]
 mb = [mean(c[k] for c in bald_curves) for k in 1:40]   # mean BALD curve
 mr = [mean(c[k] for c in rand_curves) for k in 1:40]   # mean random curve
 sb = [std(c[k]  for c in bald_curves) for k in 1:40]   # ±1 SD for ribbons
@@ -51,39 +53,44 @@ sr = [std(c[k]  for c in rand_curves) for k in 1:40]</code></pre><pre class="doc
  0.03296568080763862
  0.034521531123504805
  0.03109573032498906
- 0.030895208186527703</code></pre><h2 id="Figure-1-—-the-headline-learning-curve"><a class="docs-heading-anchor" href="#Figure-1-—-the-headline-learning-curve">Figure 1 — the headline learning curve</a><a id="Figure-1-—-the-headline-learning-curve-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-1-—-the-headline-learning-curve" title="Permalink"></a></h2><p>BinaryBALD reaches 80% test accuracy around query 30 on average; uniform random does not cross that threshold within the 40-query budget.  The ±1 SD bands show the variation across seeds: the gap is consistent, not a lucky draw.</p><p><strong>Why?</strong>  Uniform random spreads its budget across the whole domain, wasting queries in regions far from any decision boundary.  BinaryBALD&#39;s mutual-information criterion spends each query where it most reduces uncertainty about the boundary, compressing the path to the target accuracy.</p><p><strong>Caveats (important).</strong>  AL assumes a reasonably calibrated model.  At very low budgets the posterior is noisy and BALD can match or trail random; and if observations are genuinely cheap and plentiful, passive sampling wins.  A natural additional baseline — not shown here — is max-entropy / uncertainty sampling (query wherever <code>σ(x)</code> is largest); that is a small acquisition to add and would provide a tighter comparison than uniform random alone.</p><pre><code class="language-julia hljs">plt1 = plot(mb;
-    ribbon   = sb,
-    label    = &quot;BinaryBALD&quot;,
-    xlabel   = &quot;queries (after cold start)&quot;,
-    ylabel   = &quot;test accuracy&quot;,
-    title    = &quot;Data efficiency: BinaryBALD vs random&quot;,
-    legend   = :bottomright,
-    ylims    = (0.5, 1.0),
+ 0.030895208186527703</code></pre><h2 id="Figure-1-—-the-headline-learning-curve"><a class="docs-heading-anchor" href="#Figure-1-—-the-headline-learning-curve">Figure 1 — the headline learning curve</a><a id="Figure-1-—-the-headline-learning-curve-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-1-—-the-headline-learning-curve" title="Permalink"></a></h2><p>BinaryBALD reaches 80% test accuracy around query 30 on average; uniform random does not cross that threshold within the 40-query budget.  The ±1 SD bands show the variation across seeds: the gap is consistent, not a lucky draw.</p><p><strong>Why?</strong>  Uniform random spreads its budget across the whole domain, wasting queries in regions far from any decision boundary.  BinaryBALD&#39;s mutual-information criterion spends each query where it most reduces uncertainty about the boundary, compressing the path to the target accuracy.</p><p><strong>Caveats (important).</strong>  AL assumes a reasonably calibrated model.  At very low budgets the posterior is noisy and BALD can match or trail random; and if observations are genuinely cheap and plentiful, passive sampling wins.  A natural additional baseline — not shown here — is max-entropy / uncertainty sampling (query wherever <code>σ(x)</code> is largest); that is a small acquisition to add and would provide a tighter comparison than uniform random alone.</p><pre><code class="language-julia hljs">plt1 = plot(
+    mb;
+    ribbon = sb,
+    label = &quot;BinaryBALD&quot;,
+    xlabel = &quot;queries (after cold start)&quot;,
+    ylabel = &quot;test accuracy&quot;,
+    title = &quot;Data efficiency: BinaryBALD vs random&quot;,
+    legend = :bottomright,
+    ylims = (0.5, 1.0),
     linewidth = 2,
 )
-plot!(plt1, mr;
-    ribbon    = sr,
-    label     = &quot;uniform random&quot;,
+plot!(
+    plt1, mr;
+    ribbon = sr,
+    label = &quot;uniform random&quot;,
     linewidth = 2,
 )
-hline!(plt1, [0.80];
-    ls    = :dash,
-    lc    = :black,
-    lw    = 1,
+hline!(
+    plt1, [0.8];
+    ls = :dash,
+    lc = :black,
+    lw = 1,
     label = &quot;80% target&quot;,
-)</code></pre><img src="c8f5cf20.svg" alt="Example block output"/><h2 id="Figure-2-—-snapshot-at-budget-40-(seed-1)"><a class="docs-heading-anchor" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)">Figure 2 — snapshot at budget 40 (seed 1)</a><a id="Figure-2-—-snapshot-at-budget-40-(seed-1)-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)" title="Permalink"></a></h2><p>The latent GP mean <code>predmean(g, p)</code> is the pre-sigmoid score: positive in <code>label = true</code> cells, negative in <code>label = false</code> cells.  With the <code>:RdBu</code> map, blue marks the positive class and red the negative; the true checkerboard boundaries are overlaid in black.  The latent mean has recovered the alternating four-cell structure.  White dots are the 40 BALD queries (after the 10-point cold start): rather than hugging any single contour, BinaryBALD spreads them to reduce uncertainty across the disconnected regions — an information-driven coverage that lets it resolve the whole pattern within budget.</p><pre><code class="language-julia hljs"># Reproduce seed-1 BALD run for the snapshot
+)</code></pre><img src="f6d7cb7c.svg" alt="Example block output"/><h2 id="Figure-2-—-snapshot-at-budget-40-(seed-1)"><a class="docs-heading-anchor" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)">Figure 2 — snapshot at budget 40 (seed 1)</a><a id="Figure-2-—-snapshot-at-budget-40-(seed-1)-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)" title="Permalink"></a></h2><p>The latent GP mean <code>predmean(g, p)</code> is the pre-sigmoid score: positive in <code>label = true</code> cells, negative in <code>label = false</code> cells.  With the <code>:RdBu</code> map, blue marks the positive class and red the negative; the true checkerboard boundaries are overlaid in black.  The latent mean has recovered the alternating four-cell structure.  White dots are the 40 BALD queries (after the 10-point cold start): rather than hugging any single contour, BinaryBALD spreads them to reduce uncertainty across the disconnected regions — an information-driven coverage that lets it resolve the whole pattern within budget.</p><pre><code class="language-julia hljs"># Reproduce seed-1 BALD run for the snapshot
 Random.seed!(1)
 cold1 = [4 .* rand(2) .- 2 for _ in 1:10]
 al1 = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.4)), BinaryBALD())
-for x in cold1; observe!(al1, x, label(x)); end
+for x in cold1
+    observe!(al1, x, label(x))
+end
 for _ in 1:40
-    x = acquire(al1; over=box)
+    x = acquire(al1; over = box)
     observe!(al1, x, label(x))
 end
 g1 = posterior_gp(al1)
 
-xs = range(-2, 2; length=50)
-ys = range(-2, 2; length=50)
+xs = range(-2, 2; length = 50)
+ys = range(-2, 2; length = 50)
 
 Z_mean = [predmean(g1, [xi, yj]) for yj in ys, xi in xs]
 
@@ -91,19 +98,21 @@ Z_mean = [predmean(g1, [xi, yj]) for yj in ys, xi in xs]
 Z_check = [sin(2xi) * sin(2yj) for yj in ys, xi in xs]
 
 pts1 = queried_points(al1)
-px1  = [p[1] for p in pts1]
-py1  = [p[2] for p in pts1]
+px1 = [p[1] for p in pts1]
+py1 = [p[2] for p in pts1]
 
-plt2 = heatmap(xs, ys, Z_mean;
-    title        = &quot;Latent posterior mean, seed 1 (40 BALD queries)&quot;,
-    xlabel       = &quot;x₁&quot;, ylabel = &quot;x₂&quot;,
-    c            = :RdBu,
+plt2 = heatmap(
+    xs, ys, Z_mean;
+    title = &quot;Latent posterior mean, seed 1 (40 BALD queries)&quot;,
+    xlabel = &quot;x₁&quot;, ylabel = &quot;x₂&quot;,
+    c = :RdBu,
     aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
 )
-contour!(plt2, xs, ys, Z_check; levels=[0.0], lw=2, lc=:black, label=&quot;true boundary&quot;)
-scatter!(plt2, px1, py1;
-    ms    = 4,
-    mc    = :white,
-    msw   = 1,
+contour!(plt2, xs, ys, Z_check; levels = [0.0], lw = 2, lc = :black, label = &quot;true boundary&quot;)
+scatter!(
+    plt2, px1, py1;
+    ms = 4,
+    mc = :white,
+    msw = 1,
     label = &quot;BALD queries&quot;,
-)</code></pre><img src="7052cca8.svg" alt="Example block output"/><p>The example&#39;s correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../levelset_straddle/">« Level-set recovery (Straddle)</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 21 June 2026 03:07">Sunday 21 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+)</code></pre><img src="1f286018.svg" alt="Example block output"/><p>The example&#39;s correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../levelset_straddle/">« Level-set recovery (Straddle)</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 21 June 2026 08:40">Sunday 21 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
