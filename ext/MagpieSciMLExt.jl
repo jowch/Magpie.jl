@@ -78,15 +78,18 @@ end
 # posterior_gps: reconstruct d single-output ExactGPs from trained params
 # ---------------------------------------------------------------------------
 
-# Convenience overload using the stored trained params
-posterior_gps(field::ExactGPField) = posterior_gps(field, field.v0)
+# Convenience overload using the stored trained params.
+# NOTE: must be `Magpie.posterior_gps` (qualified) to EXTEND the core stub; an unqualified
+# `function posterior_gps` here would create MagpieSciMLExt.posterior_gps and shadow it, leaving
+# the public `Magpie.posterior_gps` with only the "not loaded" stub.
+Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior_gps(field, field.v0)
 
-function posterior_gps(field::ExactGPField, v)
+function Magpie.posterior_gps(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d); h = Magpie.hyp(L, v)
     k = Magpie._kernel(h.logℓ, h.logσ)
     K = kernelmatrix(k, field.Z) + exp(field.lognoise) * I    # lognoise is on the field, not in v
     C = _chol(K)
-    α = K \ Magpie.wmat(L, v)                      # (n×d) weights
+    α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
     prior = AbstractGPs.GP(field.prior.mean, k)
     return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], exp(field.lognoise)) for i in 1:field.d]
 end
