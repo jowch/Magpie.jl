@@ -267,6 +267,73 @@ Statistics.cov(g::SparseGP, xs::AbstractVector) = Matrix(Symmetric(Statistics.co
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Decoupled (Matheron) GP sampler — pure core, no SciML, no autodiff. Task 8.
+# ---------------------------------------------------------------------------
+
+"""
+    DecoupledGPSample
+
+A single pathwise sample from a GP posterior via the Matheron (decoupled) trick:
+
+    f(x) = prior_rff(x)  +  Σⱼ k(x, zⱼ) vⱼ
+
+where `prior_rff(x) = wᵀ φ(x)` is a random Fourier feature prior draw and
+`v = K(Z,Z)⁻¹(u − Φw)` is the inducing-point correction (given one draw `u`
+of the function values at `Z`).
+
+Callable: `(s::DecoupledGPSample)(x::AbstractVector) -> Float64`.
+"""
+struct DecoupledGPSample{TZ,Tk}
+    w::Vector{Float64}; ω::Matrix{Float64}; b::Vector{Float64}; D::Int
+    v::Vector{Float64}; Z::TZ; kernel::Tk
+end
+
+"""
+    _rff_features(x, ω, b, D) -> Vector{Float64}
+
+Random Fourier features: `√(2/D) .* cos.(ω' * x .+ b)`.
+"""
+_rff_features(x, ω, b, D) = sqrt(2/D) .* cos.(ω' * x .+ b)
+
+"""
+    build_decoupled_sample(kernel, Z, u; ℓ, σ, D, jitter, rng) -> DecoupledGPSample
+
+Build one pathwise sample from the GP posterior at inducing points `Z` with observed
+(drawn) function values `u`.
+
+- `ℓ`: SE lengthscale (spectral density is `N(0, I/ℓ²)`)
+- `σ`: output scale (RFF prior amplitude)
+- `D`: number of random Fourier features (default 512)
+- `jitter`: diagonal jitter on `K(Z,Z)` for numerical stability (default 1e-6)
+- `rng`: random number generator
+"""
+function build_decoupled_sample(kernel, Z, u; ℓ::Real, σ::Real=1.0, D::Int=512, jitter=1e-6,
+                                rng=Random.default_rng())
+    din = length(first(Z))
+    ω = randn(rng, din, D) ./ ℓ                  # SE spectral density N(0, I/ℓ²)
+    b = rand(rng, D) .* (2π)
+    w = (σ .* randn(rng, D))                      # output-scale enters the RFF prior amplitude
+    Φw = [dot(w, _rff_features(z, ω, b, D)) for z in Z]
+    K  = kernelmatrix(kernel, Z) + jitter*I
+    v  = _chol(K) \ (u .- Φw)
+    return DecoupledGPSample(w, ω, b, D, v, collect(Z), kernel)
+end
+
+"""
+    (s::DecoupledGPSample)(x::AbstractVector) -> Float64
+
+Evaluate the decoupled GP sample at input `x`:
+    prior RFF value + inducing-point update correction.
+"""
+function (s::DecoupledGPSample)(x::AbstractVector)
+    prior_x  = dot(s.w, _rff_features(x, s.ω, s.b, s.D))
+    update_x = dot([s.kernel(x, z) for z in s.Z], s.v)
+    return prior_x + update_x
+end
+
+# ---------------------------------------------------------------------------
+
 """
     kmeans_anchors(X, k; iters, rng) -> Vector{Vector{Float64}}
 
