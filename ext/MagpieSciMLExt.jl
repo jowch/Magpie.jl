@@ -17,21 +17,164 @@ import OptimizationOptimisers: Adam
 const MOONCAKEVJP = SciMLSensitivity.MooncakeVJP()
 const DEFAULT_SENSEALG = GaussAdjoint(autojacvec = MOONCAKEVJP)
 
-# Stage-1 single-shooting loss. α recomputed in-loss (R1); Array(sol) extraction (R2).
-function make_loss(field::ExactGPField, L::FieldLayout, u0, tspan, ts, X;
-                   known_physics=(u,t)->zero(u), solver=Tsit5(), sensealg=DEFAULT_SENSEALG,
-                   λ=1.0, logℓ_ref=0.0, s=0.5,             # logℓ prior
-                   λσ=1.0, sσ=1.0)                          # weak logσ prior (breaks the ℓ–σ ridge)
-    rhs!(du, u, pf, t) = (du .= known_physics(u, t); du .+= gpfield(field, u, pf); nothing)
+# ===========================================================================
+# Unified GP-UDE loss skeleton. Shooting is orthogonal to field type:
+#
+#   field_loss(field, shooting, data) =
+#       shooting_data_term(field, shooting, field_rhs(field, v), data) + regularizer(field, v)
+#
+# `field_rhs(field, v)` builds the in-loss α/Cholesky + the `du += f(u)` closure (per field;
+# R1: α recomputed in-loss, threaded into `pf`, NEVER closure-captured). `shooting_data_term`
+# is the ONLY place segmentation lives — field-agnostic — and returns ONLY the data fit (the
+# regularizer/KL is added ONCE per loss call by `field_loss`, OUTSIDE the trajectory loop).
+#
+# `data` is always a `Vector{<:Tuple}`: single-shooting passes a 1-element `[(ts, X)]`.
+# ===========================================================================
+
+"""
+    field_loss(field, shooting, data; kw...) -> (v -> Real)
+
+Build the scalar GP-UDE loss `v -> shooting_data_term(...) + regularizer(field, v)`. The data
+term and the regularizer split cleanly: the regularizer (priors + SVGP KL) is evaluated once
+per `v`, outside any trajectory/segment loop.
+"""
+field_loss(field, shooting, data; kw...) =
+    v -> shooting_data_term(field, shooting, field_rhs(field, v), data; kw...) +
+         Magpie.regularizer(field, v; kw...)
+
+# --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
+
+"""
+    field_rhs(field::ExactGPField, v) -> rhs!
+
+Build the ExactGPField RHS at trained params `v`: solves `α = (K_ZZ + σ_n² I)⁻¹ w` in-loss
+(via `solve_alpha`, so `∂α/∂θ` stays alive), threads `α` into `pf = [logℓ, logσ, vec(α)]`, and
+returns `rhs!(du, u, pf, t)` adding `kuZ'·α`. α is NEVER closure-captured.
+"""
+function field_rhs(field::ExactGPField, v)
+    L  = FieldLayout(field.n, field.d)
+    h  = Magpie.hyp(L, v)
+    α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED, in-loss
+    pf = vcat(h.logℓ, h.logσ, vec(α))                                          # α threaded into pf (R1)
+    rhs!(du, u, _pf, t; known_physics) = (du .= known_physics(u, t); du .+= gpfield(field, u, _pf); nothing)
+    return (pf, rhs!)
+end
+
+"""
+    field_rhs(field::SVGPField, v) -> (pf, rhs!)
+
+Build the SVGPField RHS at trained params `v`: forms the ONE shared-Z Cholesky `L_ZZ` in-loss
+(relative jitter `field.jitter·σ²`), solves `α = L_ZZ'\\μ`, threads `Z` (trainable) and `α` into
+`pf = [logℓ, logσ, vec(Z), vec(α)]`, and returns `rhs!` adding `du[i] += Σⱼ k(u,Zⱼ)·αⱼ`.
+"""
+function field_rhs(field::SVGPField, v)
+    M, dout, D = field.M, field.dout, field.D
+    logℓ, logσ = v[1], v[2]
+    k    = Magpie._kernel(logℓ, logσ)
+    Z    = Magpie.svgp_Z(field, v)        # D×M
+    μ    = Magpie.svgp_μ(field, v)        # M×dout
+    Zvec = [Z[:,j] for j in 1:M]
+    # RELATIVE in-loss jitter: field.jitter · σ² — must match posterior/L_ZZ_factor
+    jit  = field.jitter * exp(2*logσ)
+    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L   # ONE shared Cholesky (shared Z)
+    α    = L_ZZ' \ μ                                  # M×dout
+    pf   = vcat(logℓ, logσ, vec(Z), vec(α))          # Z trainable + α threaded into pf (R1)
+    function rhs!(du, u, _pf, t; known_physics)
+        du .= known_physics(u, t)
+        kk = Magpie._kernel(_pf[1], _pf[2])
+        Zr = reshape(_pf[3:2+D*M], D, M)
+        αr = reshape(_pf[3+D*M:2+D*M+M*dout], M, dout)
+        for i in 1:dout
+            du[i] += sum(kk(u, @view Zr[:,j]) * αr[j,i] for j in 1:M)
+        end
+        return nothing
+    end
+    return (pf, rhs!)
+end
+
+# --- shooting_data_term: the ONLY place segmentation lives; field-agnostic. ---
+# Returns ONLY the data fit (no regularizer — field_loss adds it once, outside the loop).
+# `data` is always a Vector{<:Tuple} of (ts, X); single-shooting = a 1-element vector.
+
+"""
+    shooting_data_term(field, ::SingleShooting, (pf, rhs!), data; u0, tspan, ...) -> Real
+
+Single-shooting data fit: for each `(ts, X)` in `data`, integrate the RHS over `tspan` saving at
+`ts` and accumulate `‖Array(sol) − X‖²` (R2: `Array(sol)`, never `sol[:,i]`). For single
+trajectories `u0` defaults to the first data column.
+"""
+function shooting_data_term(field, ::Magpie.SingleShooting, (pf, rhs!), data;
+                            u0=nothing, tspan=nothing, known_physics=(u,t)->zero(u),
+                            solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
+    f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
+    T = eltype(pf)
+    acc = zero(T)
+    for (ts, X) in data
+        ic  = u0 === nothing ? collect(X[:, 1]) : u0
+        tsp = tspan === nothing ? (first(ts), last(ts)) : tspan
+        sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat=ts, sensealg)
+        A = Array(sol)                                  # R2: Array(sol), never sol[:,i]
+        size(A) == size(X) || return convert(T, 1e6)    # divergence guard → finite sentinel
+        acc += sum(abs2, A .- X)
+    end
+    return acc
+end
+
+"""
+    shooting_data_term(field, ms::MultipleShooting, (pf, rhs!), data; tspan, s0, ...) -> Real
+
+Multiple-shooting data fit over a single trajectory `data == [(ts, X)]`: splits into `ms.nsegments`
+segments with free per-segment initial nodes `s0` (d×S), accumulating endpoint mismatch +
+continuity penalty `ms.λ` + node-0 anchor penalty `ms.λ0`. `s0` is supplied by the caller (it
+lives in the trained vector, so the loss extracts it once and passes it here).
+"""
+function shooting_data_term(field, ms::Magpie.MultipleShooting, (pf, rhs!), data;
+                            s0, known_physics=(u,t)->zero(u),
+                            solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
+    (ts, X) = only(data)
+    S = ms.nsegments
+    seg_idx = round.(Int, range(1, length(ts); length=S+1))
+    seg_t   = [ts[i] for i in seg_idx]
+    f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
+    dataerr = cont = zero(eltype(pf))
+    for i in 1:S
+        sol  = solve(ODEProblem(f!, s0[:, i], (seg_t[i], seg_t[i+1]), pf), solver;
+                     saveat=[seg_t[i+1]], sensealg)
+        endp = Array(sol)[:, end]                        # R2: Array(sol) before indexing
+        dataerr += sum(abs2, endp .- X[:, seg_idx[i+1]])
+        i < S && (cont += sum(abs2, endp .- s0[:, i+1]))
+    end
+    return dataerr + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1])
+end
+
+# ---------------------------------------------------------------------------
+# Signature-preserving WRAPPERS onto the skeleton (retire in Phase 6; 8 call sites depend
+# on them). They forward to field_loss, preserving exact argument order + reg conventions.
+# ---------------------------------------------------------------------------
+
+# Stage-1 single-shooting loss. Old reg = λ·logℓ + λσ·logσ (ExactGPField regularizer default).
+make_loss(field::ExactGPField, L::FieldLayout, u0, tspan, ts, X; kw...) =
+    field_loss(field, Magpie.SingleShooting(), [(collect(ts), X)]; u0=u0, tspan=tspan, kw...)
+
+# build_loss: Stage-1 SingleShooting + Stage-2 MultipleShooting dispatch.
+# Arg order preserved: (field, L, u_data, t_data, tspan, shooting; kw...).
+function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw...)
+    u0 = u_data isa AbstractMatrix ? collect(u_data[:, 1]) : [u_data[1]]
+    field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0=u0, tspan=tspan, kw...)
+end
+
+# Stage-2 multiple shooting. The trained vector is [logℓ, logσ, vec(w), vec(s0)] (s0 is d×S);
+# the loss extracts s0 from `v` then forwards to shooting_data_term. Old MS reg was logℓ-only
+# (no λσ term) — preserved by passing λσ=0.0 to the field regularizer.
+function build_loss(field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
+                    ms::Magpie.MultipleShooting; kw...)
+    S   = ms.nsegments
+    nwL = L.n * L.d
+    regkw = merge((λσ=0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
     return function loss(v)
-        h  = Magpie.hyp(L, v)
-        α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED
-        pf = vcat(h.logℓ, h.logσ, vec(α))
-        sol = solve(ODEProblem(rhs!, u0, tspan, pf), solver; saveat=ts, sensealg)
-        A = Array(sol)                                 # R2: Array(sol), never sol[:,i]
-        size(A) == size(X) || return convert(eltype(v), 1e6)  # divergence guard: failed/short solve → finite sentinel
-        reg = λ*(h.logℓ - logℓ_ref)^2/(2s^2) + λσ*h.logσ^2/(2sσ^2)
-        return sum(abs2, A .- X) + reg
+        s0 = reshape(v[3+nwL : 2+nwL + field.d*S], field.d, S)   # s0 after [logℓ,logσ,vec(w)]
+        shooting_data_term(field, ms, field_rhs(field, v), [(collect(t_data), u_data)]; s0=s0, kw...) +
+            Magpie.regularizer(field, v; regkw...)
     end
 end
 
@@ -50,59 +193,41 @@ function _init_vec(field, u_data, t_data, ms::Magpie.MultipleShooting)
 end
 
 # ---------------------------------------------------------------------------
-# build_loss: Stage-1 SingleShooting dispatch (Stage-2 MultipleShooting in Task 6)
+# train!: ONE optimizer driver for every GPField — Optimization.jl ADAM→LBFGS, outer Mooncake.
+# Field-specific loss/init via the small internal `_train_loss`/`_train_init` helpers; the
+# ADAM→LBFGS recipe + param storage are shared. `data` normalized to Vector{<:Tuple}
+# (a bare `(ts, X)` tuple is wrapped to a 1-element vector).
 # ---------------------------------------------------------------------------
 
-# `kw...` forwards solver/sensealg/λ/logℓ_ref/s/λσ/sσ to make_loss.
-function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw...)
-    u0 = u_data isa AbstractMatrix ? collect(u_data[:, 1]) : [u_data[1]]
-    make_loss(field, L, u0, tspan, collect(t_data), u_data; kw...)
+# Normalize the user's `data` arg to a Vector{<:Tuple} of trajectories.
+_as_trajectories(data::AbstractVector{<:Tuple}) = data
+_as_trajectories(data::Tuple) = [data]
+
+# Per-field loss builder (drives the unified skeleton; preserves each field's trained-vector layout).
+function _train_loss(field::ExactGPField, trajs, shooting, tspan; kw...)
+    (t_data, u_data) = only(trajs)                 # Exact training is single-trajectory
+    L = FieldLayout(field.n, field.d)
+    build_loss(field, L, u_data, t_data, tspan, shooting; kw...)
 end
+_train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; kw...) =
+    svgp_elbo_loss(field, trajs; tspan, kw...)
 
-# Stage-2: multiple shooting. Splits trajectory into S segments with free per-segment initial nodes
-# + a continuity penalty λ. Layout: v = [logℓ, logσ, vec(w), vec(s0)] where s0 is d×S.
-function build_loss(field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
-                    ms::Magpie.MultipleShooting; known_physics=(u,t)->zero(u),
-                    solver=Tsit5(), λ=1.0, logℓ_ref=0.0, s=0.5,
-                    sensealg=DEFAULT_SENSEALG, kw...)
-    S = ms.nsegments
-    seg_idx = round.(Int, range(1, length(t_data); length=S+1))
-    seg_t   = [t_data[i] for i in seg_idx]
-    X       = u_data
-    rhs!(du, u, pf, t) = (du .= known_physics(u, t); du .+= gpfield(field, u, pf); nothing)
-    nwL = L.n * L.d   # nw(L) — computed locally (nw is not exported from Magpie)
-    return function loss(v)
-        h  = Magpie.hyp(L, v)
-        α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED
-        pf = vcat(h.logℓ, h.logσ, vec(α))
-        s0 = reshape(v[3+nwL : 2+nwL + field.d*S], field.d, S)   # [logℓ,logσ,vec(w),vec(s0)] → s0 after 2+nw
-        data = cont = zero(eltype(v))
-        for i in 1:S
-            sol  = solve(ODEProblem(rhs!, s0[:, i], (seg_t[i], seg_t[i+1]), pf), solver;
-                         saveat=[seg_t[i+1]], sensealg)
-            endp = Array(sol)[:, end]                         # R2: Array(sol) before indexing
-            data += sum(abs2, endp .- X[:, seg_idx[i+1]])
-            i < S && (cont += sum(abs2, endp .- s0[:, i+1]))
-        end
-        reg = λ * (h.logℓ - logℓ_ref)^2 / (2s^2)
-        return data + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1]) + reg
-    end
-end
-
-# ---------------------------------------------------------------------------
-# train!: optimizer driver — Optimization.jl + LBFGS, outer Mooncake
-# ---------------------------------------------------------------------------
+# Per-field initial optimisation vector (Exact MS appends per-segment s0 nodes; SVGP = field.v0).
+_train_init(field::ExactGPField, trajs, shooting) =
+    (tu = only(trajs); _init_vec(field, tu[2], tu[1], shooting))
+_train_init(field::SVGPField, trajs, ::Magpie.SingleShooting) = copy(field.v0)
 
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
-function Magpie.train!(field::ExactGPField, (t_data, u_data);
-                       tspan=(first(t_data), last(t_data)), known_physics=(u,t)->zero(u),
-                       solver=Tsit5(), sensealg=DEFAULT_SENSEALG, shooting=Magpie.SingleShooting(),
+function Magpie.train!(field::GPField, data;
+                       shooting=Magpie.SingleShooting(),
+                       tspan=nothing,
                        ad=DI.AutoMooncake(; config=nothing),
                        adam_lr=0.05, adam_iters=1000, optimizer=LBFGS(), maxiters=200, kw...)
-    L = FieldLayout(field.n, field.d)
-    loss = build_loss(field, L, u_data, t_data, tspan, shooting; known_physics, solver, sensealg, kw...)
-    v_init = _init_vec(field, u_data, t_data, shooting)
+    trajs = _as_trajectories(data)
+    tsp   = tspan === nothing ? (first(trajs[1][1]), last(trajs[1][1])) : tspan
+    loss  = _train_loss(field, trajs, shooting, tsp; kw...)
+    v_init = _train_init(field, trajs, shooting)
     optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
     v = v_init
     if adam_iters > 0
@@ -115,16 +240,17 @@ function Magpie.train!(field::ExactGPField, (t_data, u_data);
 end
 
 # ---------------------------------------------------------------------------
-# posterior_gps: reconstruct d single-output ExactGPs from trained params
+# posterior: canonical solver-free reconstruction. posterior_gps/posterior_sparsegps
+# are thin aliases forwarding here (8 call sites + exports unchanged).
 # ---------------------------------------------------------------------------
 
-# Convenience overload using the stored trained params.
-# NOTE: must be `Magpie.posterior_gps` (qualified) to EXTEND the core stub; an unqualified
-# `function posterior_gps` here would create MagpieSciMLExt.posterior_gps and shadow it, leaving
-# the public `Magpie.posterior_gps` with only the "not loaded" stub.
-Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior_gps(field, field.v0)
+# NOTE: must be `Magpie.posterior` (qualified) to EXTEND the core stub; an unqualified
+# `function posterior` here would create MagpieSciMLExt.posterior and shadow it, leaving the
+# public `Magpie.posterior` with only the "not loaded" stub. Same for the aliases below.
+Magpie.posterior(field::GPField) = Magpie.posterior(field, field.v0)
 
-function Magpie.posterior_gps(field::ExactGPField, v)
+# ExactGPField → d single-output ExactGPs. Relative jitter must match solve_alpha so α == trained α.
+function Magpie.posterior(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d); h = Magpie.hyp(L, v)
     k = Magpie._kernel(h.logℓ, h.logσ)
     jit = exp(field.lognoise + 2*h.logσ)          # RELATIVE jitter — must match solve_alpha so α == the trained field's
@@ -134,6 +260,10 @@ function Magpie.posterior_gps(field::ExactGPField, v)
     prior = AbstractGPs.GP(field.prior.mean, k)
     return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
 end
+
+# Thin aliases forwarding to `posterior` (8 call sites + exports unchanged; retire in Phase 6).
+Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior(field)
+Magpie.posterior_gps(field::ExactGPField, v) = Magpie.posterior(field, v)
 
 # ---------------------------------------------------------------------------
 # SVGPField: multi-output multi-trajectory ELBO loss (shared Z). Task 7b.
@@ -154,90 +284,23 @@ negligible and crashes Mooncake's backward with `SingularException`). Matches
 
 Z is in the param vector (trainable); never closure-captured (R1).
 """
-function svgp_elbo_loss(field::SVGPField, trajectories;
-                        tspan, known_physics=(u,t)->zero(u), λ=1.0, logℓ_ref=0.0, s=0.5,
-                        sensealg=DEFAULT_SENSEALG, solver=Tsit5())
-    M, dout, D = field.M, field.dout, field.D
-    # RHS: pf = [logℓ, logσ, vec(Z)(D·M), vec(α)(M·dout)]; Z is trainable (not closure-captured, R1).
-    function rhs!(du, u, pf, t)
-        du .= known_physics(u, t)
-        k = Magpie._kernel(pf[1], pf[2])
-        Z = reshape(pf[3:2+D*M], D, M)
-        α = reshape(pf[3+D*M:2+D*M+M*dout], M, dout)
-        for i in 1:dout
-            du[i] += sum(k(u, @view Z[:,j]) * α[j,i] for j in 1:M)
-        end
-        return nothing
-    end
-    return function loss(v)
-        logℓ, logσ = v[1], v[2]
-        k = Magpie._kernel(logℓ, logσ)
-        Z  = Magpie.svgp_Z(field, v)       # D×M
-        μ  = Magpie.svgp_μ(field, v)       # M×dout
-        Zvec = [Z[:,j] for j in 1:M]
-        # RELATIVE in-loss jitter: field.jitter · σ² — must match posterior_sparsegps/L_ZZ_factor
-        jit = field.jitter * exp(2*logσ)
-        L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L   # ONE shared Cholesky (shared Z)
-        α  = L_ZZ' \ μ                                   # M×dout
-        pf = vcat(logℓ, logσ, vec(Z), vec(α))
-        data = zero(eltype(v))
-        for (t_data, u_data) in trajectories
-            sol = solve(ODEProblem(rhs!, collect(u_data[:,1]), tspan, pf), solver;
-                        saveat=t_data, sensealg)
-            data += sum(abs2, Array(sol) .- u_data)      # R2: Array(sol)
-        end
-        kl = sum(Magpie.svgp_kl(μ[:,i], Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M))
-                 for i in 1:dout)
-        return data + kl + λ*(logℓ - logℓ_ref)^2/(2s^2)
-    end
-end
+# Thin wrapper onto the skeleton: SVGP training is single-shooting over `trajectories`.
+# Preserves the exact ELBO (data + KL + logℓ prior) via field_loss → SVGP field_rhs +
+# field-agnostic shooting_data_term + the SVGPField regularizer (KL + logℓ prior, once).
+svgp_elbo_loss(field::SVGPField, trajectories; tspan, kw...) =
+    field_loss(field, Magpie.SingleShooting(), trajectories; tspan=tspan, kw...)
 
 # ---------------------------------------------------------------------------
-# train!(::SVGPField): ADAM warm-up → LBFGS polish (mirrors ExactGPField recipe). Task 7b.
+# posterior(::SVGPField): reconstruct dout SparseGPs from trained params. Task 7b.
+# Relative jitter field.jitter·σ² matches the in-loss Cholesky so reconstructed α == trained α.
 # ---------------------------------------------------------------------------
 
-"""
-    train!(field::SVGPField, trajectories; tspan, adam_lr, adam_iters, optimizer, maxiters, kw...)
-
-ADAM → LBFGS two-phase optimisation of the SVGP ELBO over `trajectories`.
-`kw...` forwarded to `svgp_elbo_loss` (known_physics, λ, logℓ_ref, s, sensealg, solver).
-Stores trained params into `field.v0`.
-"""
-function Magpie.train!(field::SVGPField, trajectories::AbstractVector;
-                       tspan=(first(trajectories[1][1]), last(trajectories[1][1])),
-                       ad=DI.AutoMooncake(; config=nothing),
-                       adam_lr=0.05, adam_iters=1000, optimizer=LBFGS(), maxiters=300, kw...)
-    loss = svgp_elbo_loss(field, trajectories; tspan, kw...)
-    optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
-    v = copy(field.v0)
-    if adam_iters > 0
-        s1 = Optimization.solve(Optimization.OptimizationProblem(optf, v), Adam(adam_lr); maxiters=adam_iters)
-        v = s1.u
-    end
-    sol = Optimization.solve(Optimization.OptimizationProblem(optf, v), optimizer; maxiters)
-    field.v0 .= sol.u
-    return field, sol.u
-end
-
-# ---------------------------------------------------------------------------
-# posterior_sparsegps: reconstruct dout SparseGPs from trained params. Task 7b.
-# ---------------------------------------------------------------------------
-
-"""
-    posterior_sparsegps(field::SVGPField, v=field.v0) -> Vector{SparseGP}
-
-Reconstruct `dout` `SparseGP`s sharing `Z` and `L_ZZ` from the flat trained param vector `v`.
-Uses relative jitter `field.jitter * σ²` matching the in-loss Cholesky, so reconstructed
-α equals the field's trained α exactly.
-"""
-Magpie.posterior_sparsegps(field::SVGPField) = Magpie.posterior_sparsegps(field, field.v0)
-
-function Magpie.posterior_sparsegps(field::SVGPField, v)
+function Magpie.posterior(field::SVGPField, v)
     logσ = v[2]
     k  = Magpie._kernel(v[1], logσ)
     Z  = Magpie.svgp_Z(field, v)
     Zvec = [Z[:,j] for j in 1:field.M]
-    # RELATIVE jitter — must match svgp_elbo_loss (field.jitter · σ²)
+    # RELATIVE jitter — must match field_rhs(::SVGPField) (field.jitter · σ²)
     jit  = field.jitter * exp(2*logσ)
     L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L
     μ    = Magpie.svgp_μ(field, v)                   # M×dout
@@ -246,6 +309,10 @@ function Magpie.posterior_sparsegps(field::SVGPField, v)
                      Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M))
             for i in 1:field.dout]
 end
+
+# Thin aliases forwarding to `posterior` (call sites + exports unchanged; retire in Phase 6).
+Magpie.posterior_sparsegps(field::SVGPField) = Magpie.posterior(field)
+Magpie.posterior_sparsegps(field::SVGPField, v) = Magpie.posterior(field, v)
 
 # ---------------------------------------------------------------------------
 # PULL uncertainty propagation (Stage 4). No ODE solver — discrete moment-matching recurrence.
