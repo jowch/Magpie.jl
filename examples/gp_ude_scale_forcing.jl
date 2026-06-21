@@ -70,10 +70,14 @@ savefig(p2, "sf_pathwise.png")
 using Test  #src
 sgps = posterior_sparsegps(field, vopt)                                                          #src
 truefield(u) = [1.5u[1] - u[1]*u[2], u[1]*u[2] - 3u[2]]                                       #src
-# Use the TRAINED inducing locations (Z is trainable in SVGPField); sgps[1].Z holds them        #src
-field_err = maximum(norm([predmean(sgps[i], z) for i in 1:2] .- truefield(z)) for z in sgps[1].Z) #src
-@info "SF field_err = $field_err"                                                               #src
-@test field_err < 8.0   # bound set from measured ~6.5 + margin; SVGP learns to reproduce      #src
-                         # trajectories (not to match the true field directly), so field_err     #src
-                         # reflects trajectory-to-field gap, not optimisation failure             #src
+# Field recovery is measured at ON-TRAJECTORY states — where the multi-trajectory data actually     #src
+# identifies the field. NOT at the trained inducing `Z`: `Z` is trainable and DRIFTS off the data   #src
+# region during ELBO optimisation (field_err@Z ≈ 6-9, and grows with more iters — those points are  #src
+# unconstrained). In the data-covered region the multi-trajectory SVGP recovers the field well       #src
+# (controller-validated: median err ≈ 0.11, vs ≈6.7 for a single trajectory — multi-traj is the win).#src
+fieldpts = [allstates[:, j] for j in 1:5:size(allstates, 2)]                                     #src
+ferrs = [norm([predmean(sgps[i], z) for i in 1:2] .- truefield(z)) for z in fieldpts]            #src
+med_ferr = sort(ferrs)[end ÷ 2 + 1]                                                              #src
+@info "SF field recovery (on-trajectory)" median=med_ferr max=maximum(ferrs)                     #src
+@test med_ferr < 0.3   # typical field recovery in the data-covered region (measured ≈0.11)       #src
 @test size(ens) == (128, 2, length(ts)) && all(isfinite, ens)                                   #src
