@@ -40,16 +40,20 @@ function coverage(
     d       = length(first(truth))
     χ²_thr  = chisqinvcdf(d, level)     # χ²_{d, level} threshold
 
-    hits = 0
+    hits    = 0
+    counted = 0
     for i in 1:n
-        r = truth[i] .- μs[i]          # residual vector
         Σ = Σs[i]
+        isposdef(Σ) || continue         # skip degenerate steps (e.g. PULL's t=0 Σ=0 point mass)
+        counted += 1
+        r = truth[i] .- μs[i]          # residual vector
         C = _chol(Σ)                    # Cholesky of Σ (uses existing chokepoint)
         # maha² = rᵀ Σ⁻¹ r = ‖L \ r‖²  (where Σ = LLᵀ)
         maha2 = sum(abs2, C.L \ r)
         maha2 ≤ χ²_thr && (hits += 1)
     end
-    return hits / n
+    counted == 0 && return NaN          # all steps degenerate — undefined coverage
+    return hits / counted
 end
 
 # ---------------------------------------------------------------------------
@@ -106,8 +110,7 @@ Caller must pre-integrate the trajectory (no solver is built here).
 """
 function recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts=nothing)
     # Trajectory RMSE — pure, caller supplies both trajectories
-    diffs    = [norm(p .- t) for (p, t) in zip(traj_pred, traj_truth)]
-    traj_rmse = sqrt(mean(abs2, diffs))
+    traj_rmse = sqrt(mean(sum(abs2, p .- t) for (p, t) in zip(traj_pred, traj_truth)))
 
     # Field error at visited (on-trajectory) points
     fe_vis = field_error(gps, truefield, traj_truth)

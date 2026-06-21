@@ -33,6 +33,36 @@ end
     @test coverage(truth, μs, Σs; level=0.9) ≈ 1.0
 end
 
+@testset "coverage: leading Σ=zeros step is excluded, not counted as miss" begin
+    # A leading degenerate step (Σ=0, PULL t=0 point mass) must be skipped.
+    # The remaining n_valid steps are well-calibrated N(0,I) draws.
+    Random.seed!(7)
+    d       = 3
+    n_valid = 2000
+
+    μs_valid = [zeros(d) for _ in 1:n_valid]
+    Σs_valid = [Matrix{Float64}(I, d, d) for _ in 1:n_valid]
+    truth_valid = [randn(d) for _ in 1:n_valid]
+
+    # With degenerate leading step prepended
+    μs_aug    = [zeros(d),       μs_valid...]
+    Σs_aug    = [zeros(d, d),    Σs_valid...]
+    truth_aug = [zeros(d),       truth_valid...]
+
+    c_valid = coverage(truth_valid, μs_valid, Σs_valid; level=0.9)
+    c_aug   = coverage(truth_aug,   μs_aug,   Σs_aug;   level=0.9)
+
+    # Both must be well-calibrated (~0.9) and identical (degenerate step excluded)
+    @test abs(c_valid - 0.9) < 0.05
+    @test c_aug ≈ c_valid
+
+    # Edge case: all-degenerate → NaN
+    Σs_zero = [zeros(d, d) for _ in 1:5]
+    truth_z  = [randn(d) for _ in 1:5]
+    μs_zero  = [zeros(d) for _ in 1:5]
+    @test isnan(coverage(truth_z, μs_zero, Σs_zero; level=0.9))
+end
+
 # ---------------------------------------------------------------------------
 # field_error — GP interpolation of a known function
 # ---------------------------------------------------------------------------
@@ -91,6 +121,24 @@ end
     rm2 = recovery_metrics(gps, truefield, traj_pred, traj_truth)
     @test isnan(rm2.field_err_offmanifold.median)
     @test isnan(rm2.field_err_offmanifold.q90)
+end
+
+@testset "traj_rmse: nonzero value matches hand-computed expectation" begin
+    # Two steps, each with a known offset vector.
+    # Step 1: pred=[1,0], truth=[0,0] → ‖Δ₁‖² = 1
+    # Step 2: pred=[0,0], truth=[3,4] → ‖Δ₂‖² = 9+16 = 25
+    # RMSE = sqrt(mean(1, 25)) = sqrt(13)
+    traj_pred  = [[1.0, 0.0], [0.0, 0.0]]
+    traj_truth = [[0.0, 0.0], [3.0, 4.0]]
+    expected   = sqrt(13.0)
+
+    # recovery_metrics needs gps + truefield; use trivial stubs (RMSE is pure)
+    g0 = ExactGP(SqExponentialKernel(); noise=1e-6)
+    g1 = ExactGP(SqExponentialKernel(); noise=1e-6)
+    truefield(u) = [0.0, 0.0]
+    rm = recovery_metrics([g0, g1], truefield, traj_pred, traj_truth)
+
+    @test rm.traj_rmse ≈ expected
 end
 
 # ---------------------------------------------------------------------------
