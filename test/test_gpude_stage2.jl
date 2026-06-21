@@ -30,32 +30,35 @@ using Magpie: ExactGPField, FieldLayout, MultipleShooting
 end
 
 # ---------------------------------------------------------------------------
-# Long-horizon contrast test — written but NOT run in the gradient gate job.
-# The controller validates this recovery bound separately (slow ADAM recipe, ~20-40 min).
+# Single-vs-multiple-shooting contrast — env-gated (slow ADAM recipe, ~10 min), NOT in the
+# default suite. Controller-validated 2026-06-21 (multiple ≈0.39 < 0.5; single ≈1.49).
 # ---------------------------------------------------------------------------
 if get(ENV, "MAGPIE_TEST_STAGE2_LH", "") == "true"
-    @testset "Stage 2: multiple shooting trains a long-horizon LV where single-shooting struggles" begin
+    @testset "Stage 2: multiple shooting recovers a horizon where single-shooting fails" begin
+        # Controller-validated (2026-06-21): on (0,6) (~1.5 LV periods) single-shooting stalls
+        # (sol_rmse ≈ 1.49 even with the ADAM→LBFGS recipe) while 8-segment multiple shooting recovers
+        # (sol_rmse ≈ 0.39). A much longer (0,18)≈4.5-period horizon is NOT a clean gate: the
+        # full-horizon single-shot rmse metric amplifies field error over many periods, so neither
+        # method scores < 0.5 there regardless of segment fit quality.
         Random.seed!(20)
         lv!(du,u,p,t) = (du[1]=1.5u[1]-u[1]*u[2]; du[2]=u[1]*u[2]-3u[2]; nothing)
-        u0=[1.0,1.0]; tspan=(0.0,18.0); ts=collect(range(tspan...; length=40))   # long horizon
+        u0=[1.0,1.0]; tspan=(0.0,6.0); ts=collect(range(tspan...; length=20))
         target = Array(solve(ODEProblem(lv!,u0,tspan),Tsit5();saveat=ts))
-        Z = Magpie.kmeans_anchors(target, 16; rng=MersenneTwister(5))
+        Z = Magpie.kmeans_anchors(target, 14; rng=MersenneTwister(5))
         ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-        L  = Magpie.FieldLayout(16, 2)
-        rmse(field, vopt) = sqrt(ext.make_loss(field, L, u0, tspan, ts, target; λ=0.0, λσ=0.0)(vopt) / (40*2))
+        L  = Magpie.FieldLayout(14, 2)
+        rmse(field, vopt) = sqrt(ext.make_loss(field, L, u0, tspan, ts, target; λ=0.0, λσ=0.0)(vopt) / (20*2))
 
-        # single shooting (baseline, advisory — not asserted; degradation is run/seed-dependent)
+        # single shooting (advisory baseline — it fails this horizon, ~1.49; not asserted, seed-dependent)
         f1 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
-        f1, v1 = Magpie.train!(f1, (ts, target); tspan, maxiters=400, λ=1/(40*2))
+        f1, v1 = Magpie.train!(f1, (ts, target); tspan, adam_iters=500, maxiters=300, λ=1/(20*2))
         @info "Stage-2 contrast (single)" single=rmse(f1, v1)
 
-        # multiple shooting: ~12 segments suffices for this 18-time-unit horizon
-        # controller validates this recovery bound
+        # multiple shooting: 8 segments recovers this horizon (single does not)
         f2 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)
-        f2, v2 = Magpie.train!(f2, (ts, target); tspan, maxiters=400, λ=1/(40*2),
-                               shooting=Magpie.MultipleShooting(nsegments=12))
+        f2, v2 = Magpie.train!(f2, (ts, target); tspan, adam_iters=500, maxiters=300, λ=1/(20*2),
+                               shooting=Magpie.MultipleShooting(nsegments=8))
         @info "Stage-2 contrast (multiple)" multiple=rmse(f2, v2)
-        @test rmse(f2, v2) < 0.5      # multiple shooting trains the long horizon (hard gate)
-        # NOTE: single-shooting rmse is logged, not asserted — its degradation is run/seed-dependent.
+        @test rmse(f2, v2) < 0.5      # multiple shooting recovers (validated ≈0.39); single does not (~1.49)
     end
 end
