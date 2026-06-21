@@ -47,3 +47,81 @@ variational `(μ, L_S)`, `dout` independent outputs. Trained vector (verified sh
 struct SVGPField{Tp,TZ}
     prior::Tp; Z0::TZ; M::Int; dout::Int; D::Int; jitter::Float64; v0::Vector{Float64}
 end
+
+# ---------------------------------------------------------------------------
+# Pure field core — no SciML import.
+# ---------------------------------------------------------------------------
+
+"""
+    ExactGPField(kernel, Z; d, mean, logℓ0, logσ0, lognoise)
+
+Convenience constructor. Builds the zero-mean prior and default flat params
+`v0 = [logℓ0, logσ0, zeros(n*d)]` (lognoise is NOT a trained slot).
+"""
+function ExactGPField(kernel::Kernel, Z; d::Int=1, mean=AbstractGPs.ZeroMean(),
+                      logℓ0=0.0, logσ0=0.0, lognoise=log(1e-4))
+    n = length(Z)
+    v0 = vcat(logℓ0, logσ0, zeros(n*d))      # lognoise is NOT a trained slot
+    ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
+end
+
+"""Output-scaled squared-exponential kernel: `exp(2logσ) * SE(exp(logℓ))`."""
+_kernel(logℓ, logσ) = exp(2logσ) * with_lengthscale(SqExponentialKernel(), exp(logℓ))
+
+# Layout accessors — trained vector is [logℓ, logσ, vec(w)]; lognoise lives on the field.
+nw(L::FieldLayout) = L.n * L.d
+hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2])
+wmat(L::FieldLayout, v) = reshape(v[3:2+nw(L)], L.n, L.d)
+
+"""
+    solve_alpha(field, logℓ, logσ, lognoise, w) -> Matrix{n×d}
+
+`α = (K_ZZ + σ_n² I)⁻¹ w` via a single shared Cholesky through `_chol`.
+Call INSIDE the loss so `∂α/∂θ` stays alive through autodiff.
+"""
+function solve_alpha(field::ExactGPField, logℓ, logσ, lognoise, w)
+    k = _kernel(logℓ, logσ)
+    K = kernelmatrix(k, field.Z) + exp(lognoise) * I
+    return _chol(K) \ w
+end
+
+"""
+    gpfield(field, u, pf) -> Vector{d}
+
+Forward field callable. `pf = [logℓ, logσ, vec(α)...]`; `Z` is fixed (closed over `field`).
+Returns `kuZ' * α` as a length-`d` vector.
+"""
+function gpfield(field::ExactGPField, u, pf)
+    k   = _kernel(pf[1], pf[2])
+    kuZ = [k(u, z) for z in field.Z]
+    α   = reshape(@view(pf[3:end]), field.n, field.d)
+    return vec(kuZ' * α)
+end
+
+"""
+    kmeans_anchors(X, k; iters, rng) -> Vector{Vector{Float64}}
+
+Tiny pure-Julia Lloyd's k-means on COLUMNS of `X` (each column = one d-dim state).
+Returns `k` cluster centres as `Vector{Vector{Float64}}`.
+"""
+function kmeans_anchors(X::AbstractMatrix, k::Int; iters::Int=50, rng=Random.default_rng())
+    d, N = size(X); @assert k <= N
+    C = [Vector{Float64}(X[:, j]) for j in randperm(rng, N)[1:k]]
+    assign = zeros(Int, N)
+    for _ in 1:iters
+        for i in 1:N
+            best, bd = 1, Inf
+            for c in 1:k
+                dist = 0.0
+                @inbounds for r in 1:d; dist += (X[r, i] - C[c][r])^2; end
+                dist < bd && (bd = dist; best = c)
+            end
+            assign[i] = best
+        end
+        for c in 1:k
+            m = findall(==(c), assign); isempty(m) && continue
+            C[c] = vec(sum(@view(X[:, m]); dims=2)) ./ length(m)
+        end
+    end
+    return C
+end
