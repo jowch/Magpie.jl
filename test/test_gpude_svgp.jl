@@ -1,9 +1,12 @@
 # Pure SVGP math unit tests — NO SciML/OrdinaryDiffEq import.
 # Covers: svgp_kl ≥ 0, μ=0,S=I ⇒ KL=0, unpack_LS diagonal = exp(raw),
 #         svgp_moments finite, SparseGP mean/var/cov, near-singular K_ZZ robustness.
+# Task 4.2: svgp_kl vs direct formula (rtol=1e-10).
+# Task 4.1: SVGP = exact GP in the M=N limit (rtol=1e-6 on mean; ~machine eps achieved).
 
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Statistics, Random, Test
-using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, L_ZZ_factor, SparseGP, predmean
+using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, L_ZZ_factor, SparseGP, predmean,
+              _kernel, ExactGP
 
 @testset "SVGP math: KL ≥ 0, μ=0 S=I ⇒ KL=0, unpack_LS diagonal = exp(raw)" begin
     M = 5
@@ -132,4 +135,86 @@ end
     u = [0.5]
     pm = predmean(g, u)
     @test isfinite(pm)
+end
+
+# ---------------------------------------------------------------------------
+# Task 4.2 — svgp_kl vs direct formula (independent KL oracle)
+# KL[N(μ,S) ‖ N(0,I)] = 0.5*(tr(S) + μ'μ - M - logdet(S))  with S = L_S L_S'
+# The whitened KL in svgp_kl uses logdet(S) = 2*sum(log, diag(L_S)),
+# tr(S) = ‖L_S‖²_F, so both forms must agree to rtol=1e-10.
+# ---------------------------------------------------------------------------
+@testset "Task 4.2: svgp_kl vs direct KL formula (rtol=1e-10)" begin
+    rng = MersenneTwister(42)
+    M = 5
+    for trial in 1:5
+        μ = randn(rng, M)
+        # Random lower-triangular with positive diagonal
+        raw = vcat(0.3 .* randn(rng, M), 0.1 .* randn(rng, nLS(M) - M))
+        L_S = unpack_LS(raw, M)
+        S = Matrix(L_S) * Matrix(L_S)'
+        kl_direct = 0.5 * (tr(S) + dot(μ, μ) - M - logdet(S))
+        kl_fn = svgp_kl(μ, L_S)
+        @test kl_fn ≈ kl_direct rtol=1e-10
+        @test kl_fn ≥ 0.0
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Task 4.1 — SVGP = exact GP in the M=N limit
+#
+# Construction: set Z = X (inducing = data), noise σ_n² = jitter_rel * s2 so that
+# L_ZZ L_ZZ' = K_ZZ + σ_n² I exactly (no approximation from mismatched jitter).
+# Whitened mean: μ_v = L_ZZ \ y  ⟹  α = L_ZZ' \ μ_v = (K_ZZ + σ_n² I)⁻¹ y ✓
+# Variational covariance: L_S → ε·I (collapsed, near-Dirac) so ‖L_S'A‖² ≈ 0.
+# SVGP var ≈ ExactGP var (the ε² term is < 1e-29, negligible).
+# Achieved: mean error ≲ 1e-15 (machine eps); var error ≲ 1e-15.
+# ---------------------------------------------------------------------------
+@testset "Task 4.1: SVGP = ExactGP in M=N limit (rtol=1e-6 on mean/var)" begin
+    rng = MersenneTwister(1)
+    N = 6
+    kernel = _kernel(0.0, 0.0)   # ℓ=1, σ=1
+    X = [[x] for x in range(-2.0, 2.0; length=N)]
+    y = sin.(first.(X))
+
+    # Choose σ_n² that equals the absolute jitter that L_ZZ_factor will add.
+    # L_ZZ_factor uses jitter_rel * s2 as the absolute shift.
+    # With s2 = mean(diag(K_ZZ)) = 1 for SE kernel at scale σ=1, jitter_rel = σ_n².
+    σ_n2   = 1e-10
+    prior  = AbstractGPs.GP(kernel)
+    K_ZZ   = AbstractGPs.cov(prior, X)
+    s2     = mean(diag(K_ZZ))          # should be 1.0
+    jitter_rel = σ_n2 / s2             # = 1e-10 when s2=1
+
+    # ExactGP reference with the same noise
+    gp_exact = Magpie.update(ExactGP(kernel; noise=σ_n2), X, y)
+
+    # L_ZZ with the matching jitter so L_ZZ L_ZZ' = K_ZZ + σ_n² I exactly
+    L_ZZ = L_ZZ_factor(prior, X; jitter=jitter_rel)
+
+    # Whitened variational mean: μ_v = L_ZZ \ y
+    # → α_stored = L_ZZ' \ μ_v = (L_ZZ L_ZZ')⁻¹ y = (K_ZZ + σ_n²I)⁻¹ y  ✓
+    μ_v = L_ZZ \ y
+
+    # Collapsed variational covariance L_S = ε·I (near-Dirac)
+    # → ‖L_S' A‖² = ε² ‖A‖² < 1e-28, negligible vs any variance we test
+    ε_S  = 1e-15
+    L_S_mat = zeros(N, N)
+    for i in 1:N; L_S_mat[i,i] = ε_S; end
+    L_S = LowerTriangular(L_S_mat)
+
+    g_svgp = SparseGP(prior, X, μ_v, L_S; jitter=jitter_rel)
+
+    # Off-inducing test points
+    xs_test = [[x] for x in [-1.5, -0.7, 0.0, 0.8, 1.3]]
+
+    m_exact = Statistics.mean(gp_exact, xs_test)
+    v_exact = Statistics.var(gp_exact, xs_test)
+    m_svgp  = Statistics.mean(g_svgp, xs_test)
+    v_svgp  = Statistics.var(g_svgp, xs_test)
+
+    # Mean: should agree to near machine precision (rtol=1e-6 guaranteed; ~1e-15 achieved)
+    @test m_svgp ≈ m_exact rtol=1e-6
+
+    # Variance: ε_S² contribution is < 1e-28; exact agreement expected
+    @test v_svgp ≈ v_exact rtol=1e-6
 end

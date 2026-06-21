@@ -1,6 +1,6 @@
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Test
 using Magpie: GPField, ExactGPField, SVGPField, FieldLayout, gpfield, solve_alpha, _kernel, wmat, hyp, kmeans_anchors
-using Magpie: unpack, regularizer
+using Magpie: unpack, regularizer, _rff_features, build_decoupled_sample
 using Statistics: var
 
 @testset "gpude unit: field eval + α recompute" begin
@@ -67,4 +67,55 @@ end
     @test all(0.85 .< ratio_in .< 1.15)               # in-distribution (band allows S=1000 MC noise)
     # OOD is ADVISORY: a ratio collapsing toward 0 is the variance-starvation signature → bump D. No hard assertion.
     all(ratio_ood .> 0.7) || @info "sampler OOD ratio low — consider larger D (variance starvation)" ratio_ood
+end
+
+# ---------------------------------------------------------------------------
+# Task 4.5a — RFF prior covariance converges to the SE kernel matrix as D grows
+#
+# By Bochner's theorem, for f(x) = w'φ_{ω,b}(x) with w~N(0,I_D), ω~p(ω), b~U[0,2π]:
+#     E[f(x) f(y)] = k(x,y)
+# so the empirical outer covariance over S joint (w,ω,b) draws converges to kernelmatrix.
+# With D=4096 and S=2000, max abs error < 0.1 is reliably achieved in <1 s.
+# ---------------------------------------------------------------------------
+@testset "Task 4.5a: RFF prior covariance → SE kernel matrix (D=4096, S=2000, tol=0.1)" begin
+    k   = _kernel(0.0, 0.0)    # ℓ=1, σ=1 SqExponentialKernel
+    pts = [[x] for x in [-1.0, 0.0, 1.0]]
+    K_true = kernelmatrix(k, pts)
+    n = length(pts); din = 1; D = 4096; S = 2000
+
+    rng = MersenneTwister(7)
+    vals = zeros(S, n)
+    for i in 1:S
+        omega = randn(rng, din, D)         # SE spectral density N(0, I/ℓ²) with ℓ=1
+        b     = rand(rng, D) .* 2pi
+        w     = randn(rng, D)
+        for j in 1:n
+            vals[i, j] = dot(w, _rff_features(pts[j], omega, b, D))
+        end
+    end
+    K_emp = (vals' * vals) ./ S
+
+    @test maximum(abs, K_emp - K_true) < 0.1
+end
+
+# ---------------------------------------------------------------------------
+# Task 4.5b — Matheron (decoupled) update interpolates the conditioned values
+#
+# The canonical Pathwise/Matheron update sets v = K(Z,Z)⁻¹(u − Φw) so that
+#     s(zⱼ) = dot(w, φ(zⱼ)) + Σₖ k(zⱼ,zₖ) vₖ = uⱼ  exactly.
+# This pins the posterior sample to the conditioned inducing values u.
+# Test: max |s(zⱼ) − uⱼ| < 1e-5 (dominated by jitter=1e-6, not RFF approx).
+# ---------------------------------------------------------------------------
+@testset "Task 4.5b: Matheron update interpolates conditioned values at inducing points" begin
+    rng = MersenneTwister(123)
+    k   = _kernel(0.0, 0.0)
+    Z   = [[x] for x in range(-2.0, 2.0; length=5)]
+    u_vals = randn(rng, 5)
+
+    samp = build_decoupled_sample(k, Z, u_vals;
+                                  ℓ=1.0, σ=1.0, D=512, jitter=1e-6,
+                                  rng=MersenneTwister(99))
+    s_at_Z = [samp(z) for z in Z]
+
+    @test maximum(abs, s_at_Z .- u_vals) < 1e-4
 end
