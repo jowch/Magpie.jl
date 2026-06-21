@@ -1,7 +1,9 @@
 # Critical-Point Survey via Derivative-GP + Component Straddle
 
 **Date:** 2026-06-21
-**Status:** Design approved, pre-implementation
+**Status:** Implemented (`worktree-critical-points`). **The "Post-exploration revision" section
+below is superseded — read "As-built (final)" at the end for what was actually built and found;
+the cosine "success" it describes turned out to be artifactual.**
 **Type:** Exploratory example / Capability-A extension (ahead of the post-Capability-B example pass)
 
 ## Goal
@@ -164,7 +166,13 @@ maximum at (−0.2708,−0.9230) (f≈181.6), 4 saddles. Observe f only, run the
 - Whether the active loop places enough data near saddles/maximum (not just minima) for
   the mean Hessian to classify them correctly — if not, increase budget or seed coverage.
 
-## Post-exploration revision (2026-06-21)
+## Post-exploration revision (2026-06-21) — SUPERSEDED
+
+> **Superseded by "As-built (final)" below.** This section's central claim — that the
+> `cos(x)+cos(y)` active loop is "the clean active-learning success" — was later shown to be an
+> **artifact** of a brittle extraction filter that handicapped the random baseline. With robust
+> extraction, uniform random ties or beats the active loop on these small-domain problems. Kept
+> for history; do not treat its conclusions or deliverables as current.
 
 Implementing Task 4 (Himmelblau exemplar) surfaced that the original target was the wrong
 shape, and a controlled diagnosis re-scoped the example. Recorded honestly:
@@ -205,3 +213,79 @@ uniform-random, budget-swept, coverage-measured):
   the `r=0` prior-variance term (Matérn `‖·‖` singularity → NaN; needs the analytic constant
   `5/3ℓ²`). A future extension; RBF stays the v1 path.
 - Matérn was a red herring for Himmelblau's minima (the kernel was never the problem).
+
+## As-built (final)
+
+What was actually built (`worktree-critical-points`, suite 77/77) and — more importantly —
+what the investigation found. The headline claim of the superseded revision did not survive
+scrutiny; the work below is the honest replacement.
+
+### Engine changes (reusable, independent of this example)
+
+1. **`fit` optimizes σ_f² as well as ℓ.** Previously `fit` tuned only the lengthscale, with
+   signal variance frozen at 1 (`src/fit.jl`). `grad_predict` then hardcoded prior gradient
+   variance as `1/ℓ²`, so σ_f² did **not** cancel in the `GradStraddle` explore/exploit ratio
+   (unlike ordinary `Straddle` on f-values, where it does) — miscalibrating the acquisition on
+   any non-unit-scale function. Now `fit` recovers `σ_f²·withlengthscale(SqExp, ℓ)`; the manual
+   `log1p`/z-score standardization the old revision called a "precondition" is no longer needed
+   for scaled targets. (Measured: 50×-scaled cosine recovers without standardization.)
+
+2. **`grad_predict` is kernel-generic via AD.** Replaced the hand-written RBF derivative blocks
+   with `ForwardDiff` on `predmean` (gives μ∇ and the mean-Hessian for *any* kernel — this is
+   also the answer to "what if there's no closed-form Hessian") and AD on the kernel for the
+   gradient-variance cross term. The only kernel-specific piece is the prior gradient-variance
+   constant where AD is singular at coincidence (Matérn's `‖·‖`): AD-by-default, with an analytic
+   override (`5/3ℓ²·σ²` for Matérn-5/2). FD-verified on SqExp and Matérn-5/2.
+
+3. **`LocalPenalization` acquisition (`src/acquisitions.jl`).** A composable soft-penalty wrapper
+   adding `Σⱼ log Φ((‖x−xⱼ‖ − c·ℓ)/(s·ℓ))` to any base acquisition over the observed history.
+   Adapts Local Penalization (González et al. 2016): the soft probit envelope transfers, but the
+   radius is the **fitted lengthscale `c·ℓ`** (a redundancy scale), not LP's optimum-seeking
+   `(M−μ)/L` — that formula assumes a scalar being maximized and does not transfer to gradient-zero
+   search (verified against the paper). `ActiveLearner.acq` is now abstractly typed so the loop's
+   live history can be wrapped: `al.acq = LocalPenalization(al.acq, al.Xs)`.
+
+4. **Robust extraction.** The exemplar's `critical_points` now does multi-start Newton-from-grid
+   (no CI candidate gate). The old `|μ∇| ≤ β√Σ∇` filter is brittle once the gradient is
+   well-resolved: `Σ∇ → 0` shrinks the band and rejects grid points merely near a zero.
+
+### The exemplar (honest)
+
+`f(x) = (x₁²−1)² + (x₂²−1)²` — 9 critical points (4 minima, 1 max, 4 saddles) all inside
+`[-1,1]²`, searched over the **large** box `[-6,6]²` (the centre is ~1/36 of the area). This is
+the regime where active learning genuinely beats random:
+
+- **uniform random** spreads across the whole box; only a handful of points reach the informative
+  centre → med **2/9** recovered.
+- **plain GradStraddle** mode-collapses (resamples one spot) → fails.
+- **GradStraddle + LocalPenalization** focuses on the centre (the straddle is repelled from the
+  steep outer walls toward the gradient zeros) *and* spreads within it (the penalty) → med **9/9**.
+  Both pieces are required.
+
+### Findings (measured; the honest core of this work)
+
+- **σ_f²-calibration is correct but does not rescue Himmelblau.** A 6-seed sweep over
+  {raw, log1p+z} × {frozen-σ², fitted-σ²} left Himmelblau coverage flat (~2.5–3.5/9). The
+  bottleneck is the **acquisition's exploration on a multiscale landscape**, not calibration.
+- **Mechanism of the collapse (diagnosed):** the deterministic `GradStraddle` argmax pins to a
+  box corner — 99/150 queries in one cell — because the `−|μ∇|` exploit term makes ~62% of a
+  steep domain repulsive, collapsing the argmax onto the flattest empty region; and stacking
+  queries at one point never resolves its gradient (which needs spatial spread). `LocalPenalization`
+  fixes exactly this.
+- **Active learning does NOT beat random for low-D *exhaustive* enumeration on a small domain.**
+  Once extraction is robust, uniform random ties cosine (9/9) and beats the active loop on
+  Himmelblau at tight budgets. Exhaustive enumeration needs *global* coverage, which uniform
+  random is near-optimal at in low-D. The active loop's advantage appears only with **localized
+  targets / scarce budget relative to domain** (hence the large-domain exemplar above). The
+  earlier "active beats random" was an extraction artifact.
+- **Inatsu (2020) relationship:** the example uses a Bryan-straddle heuristic + posterior-mean
+  Hessian, not Inatsu's CI-classifier acquisition + λ_min CI. Region-eviction (Inatsu's idea) and
+  the λ_min-CI classifier remain the principled, un-built upgrades.
+
+### Deferred / open
+
+- λ_min confidence-interval classification (vs the posterior-mean Hessian point estimate).
+- Inatsu-style targeted region-eviction (evict only gradient-resolved regions) vs the current
+  blanket `LocalPenalization`.
+- Higher-dimensional enumeration (grid extraction does not scale past ~3-D; needs sample-based
+  multi-start). A separable d=3 test showed random still competitive when minima are lattice-spread.
