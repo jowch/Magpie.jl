@@ -105,6 +105,126 @@ function gpfield(field::ExactGPField, u, pf)
     return vec(kuZ' * α)
 end
 
+# ---------------------------------------------------------------------------
+# Pure SVGP math — no SciML. Task 7.
+# ---------------------------------------------------------------------------
+
+"""
+    nLS(M) -> Int
+
+Number of free parameters in a lower-triangular M×M matrix (the variational
+factor `L_S` stored in flat form).
+"""
+nLS(M) = (M*(M+1)) ÷ 2
+
+"""
+    unpack_LS(raw, M) -> LowerTriangular
+
+Rebuild the lower-triangular variational Cholesky factor `L_S` from a flat raw
+vector of length `nLS(M)`. Diagonal entries are `exp(raw[diag])` for positivity;
+off-diagonal entries are taken as-is. Column-major lower layout.
+"""
+function unpack_LS(raw::AbstractVector, M::Int)
+    L = zeros(eltype(raw), M, M)
+    idx = 1
+    for j in 1:M, i in j:M
+        L[i, j] = (i == j) ? exp(raw[idx]) : raw[idx]
+        idx += 1
+    end
+    return LowerTriangular(L)
+end
+
+"""
+    svgp_kl(μ, S_L) -> Real
+
+Whitened collapsed KL divergence KL[q(v) ‖ p(v)] where `q(v) = N(μ, S_L S_L')` and
+`p(v) = N(0, I)`. Prior on whitened variable `v = L_ZZ' \\ u` is standard normal, so:
+
+    KL = 0.5 * (‖S_L‖²_F + ‖μ‖² - M - 2 Σ log diag(S_L))
+"""
+svgp_kl(μ, S_L) = (M = length(μ); 0.5*(sum(abs2, S_L) + dot(μ, μ) - M - 2*sum(log, diag(S_L))))
+
+"""
+    L_ZZ_factor(prior, Z; jitter=1e-4) -> LowerTriangular
+
+Cholesky factor `L_ZZ` of the inducing-point kernel matrix `K(Z, Z)`.
+
+Uses a **relative** jitter `jitter * σ²` (where `σ² ≈ mean diagonal of K_ZZ`) to keep
+`K_ZZ` positive-definite regardless of how far the signal variance drifts during
+optimization. An absolute jitter goes negligible once `σ²` grows, which causes
+`SingularException` in Mooncake's Cholesky backward — the same pattern that hit
+Stage 1's ExactGP training (fixed there by `exp(lognoise + 2*logσ)`).
+
+Default `jitter=1e-4` is a relative factor (not absolute).
+"""
+function L_ZZ_factor(prior, Z; jitter=1e-4)
+    K = AbstractGPs.cov(prior, Z)
+    s2 = sum(i -> K[i,i], 1:size(K,1)) / size(K,1)   # ≈ σ² (mean diagonal)
+    return _chol(K + (jitter * s2) * I).L
+end
+
+"""
+    svgp_moments(prior, Z, L_ZZ, α, L_S, u) -> (μ_star, σ²)
+
+Whitened predictive mean and variance at a single point `u`.
+
+    A     = L_ZZ \\ k(Z, u)               # whitened cross-covariance
+    μ_star = m(u) + k(Z, u)' α           # posterior mean (α = L_ZZ' \\ μ_v)
+    σ²    = k(u,u) - A'A + ‖L_S' A‖²   # posterior variance with variational correction
+"""
+function svgp_moments(prior, Z, L_ZZ, α, L_S, u)
+    kZu  = vec(AbstractGPs.cov(prior, Z, [u]))
+    A    = L_ZZ \ kZu
+    μ_star = only(AbstractGPs.mean(prior, [u])) + dot(kZu, α)
+    σ2   = only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A)
+    return μ_star, σ2
+end
+
+# ---------------------------------------------------------------------------
+# SparseGP — full AbstractGPModel via svgp_moments. Task 7.
+# ---------------------------------------------------------------------------
+
+"""
+    SparseGP(prior, Z, μ, L_S; jitter=1e-4) -> SparseGP
+
+Convenience constructor from variational parameters `μ` (whitened mean) and `L_S`
+(lower-triangular variational Cholesky). Computes and caches `L_ZZ` and `α = L_ZZ' \\ μ`.
+"""
+function SparseGP(prior, Z, μ::AbstractVector, L_S; jitter=1e-4)
+    L_ZZ = L_ZZ_factor(prior, Z; jitter)
+    SparseGP(prior, Z, L_ZZ' \ μ, L_ZZ, L_S)
+end
+
+"""Posterior mean at a single input `u` (scalar)."""
+predmean(g::SparseGP, u) = svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, u)[1]
+
+"""Posterior mean vector at `xs`."""
+Statistics.mean(g::SparseGP, xs::AbstractVector) = [predmean(g, x) for x in xs]
+
+"""Posterior marginal variance vector at `xs`."""
+Statistics.var(g::SparseGP, xs::AbstractVector) =
+    [svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, x)[2] for x in xs]
+
+"""
+    cov(g::SparseGP, xs, ys) -> Matrix
+
+Posterior cross-covariance between input sets `xs` and `ys`, including the
+variational correction from `L_S`.
+
+    Ax = L_ZZ \\ K(Z, xs),   Ay = L_ZZ \\ K(Z, ys)
+    Cov = K(xs, ys) - Ax' Ay + (L_S' Ax)' (L_S' Ay)
+"""
+function Statistics.cov(g::SparseGP, xs::AbstractVector, ys::AbstractVector)
+    Ax = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, xs)   # M × |xs|
+    Ay = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, ys)   # M × |ys|
+    AbstractGPs.cov(g.prior, xs, ys) .- Ax'Ay .+ (g.L_S'Ax)' * (g.L_S'Ay)
+end
+
+"""Posterior covariance matrix within `xs` (symmetric)."""
+Statistics.cov(g::SparseGP, xs::AbstractVector) = Matrix(Symmetric(Statistics.cov(g, xs, xs)))
+
+# ---------------------------------------------------------------------------
+
 """
     kmeans_anchors(X, k; iters, rng) -> Vector{Vector{Float64}}
 
