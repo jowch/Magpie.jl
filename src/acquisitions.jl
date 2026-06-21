@@ -99,6 +99,24 @@ function (a::GradStraddle)(g, x)
 end
 
 @doc raw"""
+    RandGradStraddle{R} <: AcquisitionFunction
+
+Randomized [`GradStraddle`](@ref): the band width is redrawn each round as
+`√(−2 log u)`, `u ~ U(0,1)` (the [`RandStraddle`](@ref) schedule). Randomizing the band
+breaks the deterministic-argmax fixation that mode-collapses the plain `GradStraddle` on
+landscapes with large gradient-magnitude variation — there the constant `−|μ∇|` term pins
+the maximizer to one region, so a single-scale loop covers it but a steep multiscale one
+does not. Call [`resample`](@ref) between rounds to redraw.
+"""
+struct RandGradStraddle{R} <: AcquisitionFunction; sβ::Float64; rng::R; end
+RandGradStraddle(; rng=Random.default_rng()) = RandGradStraddle(sqrt(-2*log(rand(rng))), rng)
+function (a::RandGradStraddle)(g, x)
+    μ∇, Σdiag, _ = grad_predict(g, x; hessian=false)
+    return sum(a.sβ * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
+end
+resample(a::RandGradStraddle) = RandGradStraddle(sqrt(-2*log(rand(a.rng))), a.rng)
+
+@doc raw"""
     BinaryBALD <: AcquisitionFunction
 
 Bayesian Active Learning by Disagreement for binary classification (Houlsby et al.
