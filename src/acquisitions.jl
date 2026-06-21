@@ -77,6 +77,28 @@ resample(a::AcquisitionFunction) = a
 resample(a::RandStraddle) = RandStraddle(a.h, sqrt(-2 * log(rand(a.rng))), a.rng)
 
 @doc raw"""
+    GradStraddle(; β=1.96) <: AcquisitionFunction
+
+Vector-zero straddle: a component-wise Straddle on the GP gradient, summed over
+components. Scores high where every `∂f/∂xᵢ` is near zero AND uncertain, so the
+loop samples toward the zeros of ∇f (the critical points of f).
+
+```math
+\text{score}(x) = \sum_i \left[ \beta\,\sqrt{\mathrm{Var}[\partial_i f(x)]} - |\mathbb{E}[\partial_i f(x)]| \right]
+```
+
+Sum (not min) over components: `min` is dominated by the most-resolved component
+and starves half-resolved critical points; the sum keeps explore/exploit tension
+on every component.
+"""
+struct GradStraddle{T<:Real} <: AcquisitionFunction; β::T; end
+GradStraddle(; β::Real=1.96) = GradStraddle(float(β))
+function (a::GradStraddle)(g, x)
+    μ∇, Σdiag, _ = grad_predict(g, x; hessian=false)   # acquisition needs no Hessian
+    return sum(a.β * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
+end
+
+@doc raw"""
     BinaryBALD <: AcquisitionFunction
 
 Bayesian Active Learning by Disagreement for binary classification (Houlsby et al.

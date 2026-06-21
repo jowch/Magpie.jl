@@ -46,3 +46,14 @@ using Magpie: LaplaceGP, BinaryBALD
     g0 = Magpie.update(LaplaceGP(with_lengthscale(SqExponentialKernel(), 1.0)), [[0.0]], [true])
     @test 0 ≤ a(g0, [0.0]) < 0.5
 end
+
+@testset "GradStraddle scores high near a gradient zero and drives acquire" begin
+    Random.seed!(5)
+    f(x) = (x[1]-0.5)^2 + (x[2]+0.3)^2          # unique min (gradient zero) at (0.5,-0.3)
+    X = [4 .* rand(2) .- 2 for _ in 1:25]
+    g = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.6); noise=1e-5), X, f.(X))
+    a = GradStraddle(β=1.96)
+    @test a(g, [0.5, -0.3]) > a(g, [1.8, 1.8])   # higher near the zero than far in a corner
+    p = acquire(g, a; over=Box([-2.0,-2.0],[2.0,2.0]))
+    @test p isa AbstractVector && length(p) == 2
+end
