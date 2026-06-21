@@ -16,16 +16,17 @@ using Magpie: ExactGPField, FieldLayout, MultipleShooting
     S = 3
     ms = MultipleShooting(nsegments=S)
     loss = ext.build_loss(field, FieldLayout(n,d), target, ts, tspan, ms)
-    # build the flat vector: [field params (3 + n*d) ; vec(s0) (d*S)]
+    # build the flat vector: [field params (NHYP + n*d) ; vec(s0) (d*S)]; NHYP=[logℓ,logσ,logσ_obs]
     seg_idx = round.(Int, range(1, length(ts); length=S+1))
     s0 = hcat([target[:, seg_idx[i]] for i in 1:S]...)
-    v0 = vcat(log(0.9), 0.0, 0.1 .* randn(n*d), vec(s0))   # [logℓ, logσ, vec(w), vec(s0)]
+    v0 = vcat(log(0.9), 0.0, log(0.1), 0.1 .* randn(n*d), vec(s0))   # [logℓ, logσ, logσ_obs, vec(w), vec(s0)]
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5,1), loss, v0)[1]
     relerr = norm(g_mc.-g_fd)/max(norm(g_fd),eps())
     @info "Stage2 grad" relerr=relerr
     @test relerr < 5e-3
-    s2 = (2 + n*d) + d + 1 : (2 + n*d) + 2d          # free second node s0[:,2] (2-prefix layout)
+    off = Magpie.NHYP + n*d                           # s0 block starts after [logℓ,logσ,logσ_obs,vec(w)]
+    s2 = off + d + 1 : off + 2d                       # free second node s0[:,2]
     @test norm(g_fd[s2]) > 1e-4                        # per-segment node differentiates
 end
 
@@ -47,7 +48,12 @@ if get(ENV, "MAGPIE_TEST_STAGE2_LH", "") == "true"
         Z = Magpie.kmeans_anchors(target, 14; rng=MersenneTwister(5))
         ext = Base.get_extension(Magpie, :MagpieSciMLExt)
         L  = Magpie.FieldLayout(14, 2)
-        rmse(field, vopt) = sqrt(ext.make_loss(field, L, u0, tspan, ts, target; λ=0.0, λσ=0.0)(vopt) / (20*2))
+        # make_loss is a Gaussian NLL now; recover SSE = 2σ²·(NLL − (Nd/2)log(2πσ²)) for the RMSE metric.
+        function rmse(field, vopt)
+            Nd = 20*2; σ2 = exp(2*vopt[Magpie.NHYP])
+            nll = ext.make_loss(field, L, u0, tspan, ts, target; λ=0.0, λσ=0.0)(vopt)
+            sqrt(2σ2*(nll - (Nd/2)*log(2π*σ2)) / Nd)
+        end
 
         # single shooting (advisory baseline — it fails this horizon, ~1.49; not asserted, seed-dependent)
         f1 = Magpie.ExactGPField(SqExponentialKernel(), Z; d=2)

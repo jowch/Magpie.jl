@@ -25,15 +25,17 @@ using Magpie: SVGPField, nLS
     field = SVGPField(SqExponentialKernel(), Zg; dout=2)
     loss = ext.svgp_elbo_loss(field, trajs; tspan)
     # Seed μ ≠ 0 so ∂/∂Z is nonzero (μ=0 ⇒ α=0 ⇒ field≡0 ⇒ vacuous ∂/∂Z, R3).
+    # Block offsets route through Magpie.NHYP (hyper prefix [logℓ,logσ,logσ_obs]); D=2 ⇒ Z is 2·M.
+    H = Magpie.NHYP
     v0 = copy(field.v0)
-    v0[3+2*M : 2+2*M+M*2] .= reduce(vcat, [lv(z) for z in Zg])
+    v0[H+2*M+1 : H+2*M+M*2] .= reduce(vcat, [lv(z) for z in Zg])
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
-    @info "SVGP-MO grad" relerr norm_dZ=norm(g_fd[3:2+2*M]) norm_dμ=norm(g_fd[3+2*M:2+2*M+M*2])
+    Zb = H+1 : H+2*M;  μb = H+2*M+1 : H+2*M+M*2
+    @info "SVGP-MO grad" relerr norm_dZ=norm(g_fd[Zb]) norm_dμ=norm(g_fd[μb]) dσobs=abs(g_fd[H])
     @test relerr < 1e-3                                  # spike: 8.4e-5
     # Shared-Z and per-output μ gradients must both be live
-    Zb = 3:2+2*M;  μb = 3+2*M:2+2*M+M*2
     @test norm(g_fd[Zb]) > 1e-2
     @test norm(g_fd[μb]) > 1e-2
 end

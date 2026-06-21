@@ -56,6 +56,8 @@ using Test  #src
 ext = Base.get_extension(Magpie, :MagpieSciMLExt)                                              #src
 dloss = ext.make_loss(field, Magpie.FieldLayout(field.n, field.d), u0, tspan, ts, target;       #src
                       solver=AutoTsit5(Rosenbrock23()), λ=0.0, λσ=0.0)                          #src
-sol_rmse = sqrt(dloss(vopt) / (20*2))                                                           #src
+## dloss is now a Gaussian NLL; recover the SSE = 2σ²·(NLL − (Nd/2)·log(2πσ²)) for the RMSE metric. #src
+σ2 = exp(2*vopt[Magpie.NHYP]); Nd = 20*2                                                         #src
+sol_rmse = sqrt(2σ2*(dloss(vopt) - (Nd/2)*log(2π*σ2)) / Nd)                                      #src
 @info "VdP sol_rmse = $sol_rmse"                                                               #src
 @test sol_rmse < 0.15                                                                           #src

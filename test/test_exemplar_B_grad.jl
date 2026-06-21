@@ -13,12 +13,13 @@ using FiniteDifferences
     target = Array(solve(ODEProblem((u,p,t)->[truef(u[1])], u0, tspan), Tsit5(); saveat=ts))
     field = ExactGPField(SqExponentialKernel(), Z; d=1)
     L = FieldLayout(10, 1)
-    v0 = vcat(log(1.3), 0.0, zeros(10))   # [logℓ, logσ, vec(w)]; w=0 off-optimum so loss is non-flat in w
+    v0 = vcat(log(1.3), 0.0, log(0.1), zeros(10))   # [logℓ, logσ, logσ_obs, vec(w)]; w=0 off-optimum so loss is non-flat in w
     loss = ext.make_loss(field, L, u0, tspan, ts, target)
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
-    @info "B-grad" relerr wnorm=norm(g_fd[3:end])
-    @test relerr < 5e-3                # Spike 1 saw ~1.3e-4
-    @test norm(g_fd[3:end]) > 1e-3     # R3: ∂loss/∂w live (w-block now starts at index 3)
+    @info "B-grad" relerr wnorm=norm(g_fd[Magpie.NHYP+1:end]) dσobs=abs(g_fd[Magpie.NHYP])
+    @test relerr < 5e-3                          # Spike 1 saw ~1.3e-4
+    @test norm(g_fd[Magpie.NHYP+1:end]) > 1e-3   # R3: ∂loss/∂w live (w-block starts after the hyper prefix)
+    @test abs(g_fd[Magpie.NHYP]) > 1e-3          # R3 (Phase 2): the σ_obs slot is live
 end
