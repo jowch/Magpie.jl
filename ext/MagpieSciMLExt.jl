@@ -1,7 +1,7 @@
 module MagpieSciMLExt
 
 using Magpie
-using Magpie: _chol, predmean, ExactGP, ExactGPField, SparseGP, FieldLayout, gpfield, solve_alpha
+using Magpie: _chol, predmean, ExactGP, ExactGPField, SparseGP, SVGPField, FieldLayout, gpfield, solve_alpha
 using OrdinaryDiffEq
 using SciMLSensitivity
 import SciMLBase
@@ -133,6 +133,118 @@ function Magpie.posterior_gps(field::ExactGPField, v)
     α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
     prior = AbstractGPs.GP(field.prior.mean, k)
     return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
+end
+
+# ---------------------------------------------------------------------------
+# SVGPField: multi-output multi-trajectory ELBO loss (shared Z). Task 7b.
+# ---------------------------------------------------------------------------
+
+"""
+    svgp_elbo_loss(field::SVGPField, trajectories; tspan, ...) -> Function
+
+Returns a scalar loss `v -> -ELBO` over multiple trajectories sharing one SVGP field.
+
+`trajectories` is a `Vector` of `(t_data, u_data)` pairs (each `u_data` is `dout × T`).
+The data term sums over all trajectories (multi-trajectory verified).
+
+Relative in-loss jitter: `jit = field.jitter * exp(2*logσ)` — scales with σ² so the
+Cholesky stays well-conditioned when logσ drifts during training (absolute jitter goes
+negligible and crashes Mooncake's backward with `SingularException`). Matches
+`L_ZZ_factor`'s relative-jitter convention so reconstructed α equals the trained field's.
+
+Z is in the param vector (trainable); never closure-captured (R1).
+"""
+function svgp_elbo_loss(field::SVGPField, trajectories;
+                        tspan, known_physics=(u,t)->zero(u), λ=1.0, logℓ_ref=0.0, s=0.5,
+                        sensealg=DEFAULT_SENSEALG, solver=Tsit5())
+    M, dout, D = field.M, field.dout, field.D
+    # RHS: pf = [logℓ, logσ, vec(Z)(D·M), vec(α)(M·dout)]; Z is trainable (not closure-captured, R1).
+    function rhs!(du, u, pf, t)
+        du .= known_physics(u, t)
+        k = Magpie._kernel(pf[1], pf[2])
+        Z = reshape(pf[3:2+D*M], D, M)
+        α = reshape(pf[3+D*M:2+D*M+M*dout], M, dout)
+        for i in 1:dout
+            du[i] += sum(k(u, @view Z[:,j]) * α[j,i] for j in 1:M)
+        end
+        return nothing
+    end
+    return function loss(v)
+        logℓ, logσ = v[1], v[2]
+        k = Magpie._kernel(logℓ, logσ)
+        Z  = Magpie.svgp_Z(field, v)       # D×M
+        μ  = Magpie.svgp_μ(field, v)       # M×dout
+        Zvec = [Z[:,j] for j in 1:M]
+        # RELATIVE in-loss jitter: field.jitter · σ² — must match posterior_sparsegps/L_ZZ_factor
+        jit = field.jitter * exp(2*logσ)
+        L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L   # ONE shared Cholesky (shared Z)
+        α  = L_ZZ' \ μ                                   # M×dout
+        pf = vcat(logℓ, logσ, vec(Z), vec(α))
+        data = zero(eltype(v))
+        for (t_data, u_data) in trajectories
+            sol = solve(ODEProblem(rhs!, collect(u_data[:,1]), tspan, pf), solver;
+                        saveat=t_data, sensealg)
+            data += sum(abs2, Array(sol) .- u_data)      # R2: Array(sol)
+        end
+        kl = sum(Magpie.svgp_kl(μ[:,i], Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M))
+                 for i in 1:dout)
+        return data + kl + λ*(logℓ - logℓ_ref)^2/(2s^2)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# train!(::SVGPField): ADAM warm-up → LBFGS polish (mirrors ExactGPField recipe). Task 7b.
+# ---------------------------------------------------------------------------
+
+"""
+    train!(field::SVGPField, trajectories; tspan, adam_lr, adam_iters, optimizer, maxiters, kw...)
+
+ADAM → LBFGS two-phase optimisation of the SVGP ELBO over `trajectories`.
+`kw...` forwarded to `svgp_elbo_loss` (known_physics, λ, logℓ_ref, s, sensealg, solver).
+Stores trained params into `field.v0`.
+"""
+function Magpie.train!(field::SVGPField, trajectories::AbstractVector;
+                       tspan=(first(trajectories[1][1]), last(trajectories[1][1])),
+                       ad=DI.AutoMooncake(; config=nothing),
+                       adam_lr=0.05, adam_iters=1000, optimizer=LBFGS(), maxiters=300, kw...)
+    loss = svgp_elbo_loss(field, trajectories; tspan, kw...)
+    optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
+    v = copy(field.v0)
+    if adam_iters > 0
+        s1 = Optimization.solve(Optimization.OptimizationProblem(optf, v), Adam(adam_lr); maxiters=adam_iters)
+        v = s1.u
+    end
+    sol = Optimization.solve(Optimization.OptimizationProblem(optf, v), optimizer; maxiters)
+    field.v0 .= sol.u
+    return field, sol.u
+end
+
+# ---------------------------------------------------------------------------
+# posterior_sparsegps: reconstruct dout SparseGPs from trained params. Task 7b.
+# ---------------------------------------------------------------------------
+
+"""
+    posterior_sparsegps(field::SVGPField, v=field.v0) -> Vector{SparseGP}
+
+Reconstruct `dout` `SparseGP`s sharing `Z` and `L_ZZ` from the flat trained param vector `v`.
+Uses relative jitter `field.jitter * σ²` matching the in-loss Cholesky, so reconstructed
+α equals the field's trained α exactly.
+"""
+Magpie.posterior_sparsegps(field::SVGPField) = Magpie.posterior_sparsegps(field, field.v0)
+
+function Magpie.posterior_sparsegps(field::SVGPField, v)
+    logσ = v[2]
+    k  = Magpie._kernel(v[1], logσ)
+    Z  = Magpie.svgp_Z(field, v)
+    Zvec = [Z[:,j] for j in 1:field.M]
+    # RELATIVE jitter — must match svgp_elbo_loss (field.jitter · σ²)
+    jit  = field.jitter * exp(2*logσ)
+    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L
+    μ    = Magpie.svgp_μ(field, v)                   # M×dout
+    prior = AbstractGPs.GP(field.prior.mean, k)
+    return [SparseGP(prior, Zvec, L_ZZ' \ μ[:,i], L_ZZ,
+                     Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M))
+            for i in 1:field.dout]
 end
 
 end # module

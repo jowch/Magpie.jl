@@ -106,6 +106,48 @@ function gpfield(field::ExactGPField, u, pf)
 end
 
 # ---------------------------------------------------------------------------
+# SVGPField convenience constructor + layout helpers. Task 7b.
+# ---------------------------------------------------------------------------
+
+"""
+    SVGPField(kernel, Z0; dout, mean, logℓ0, logσ0, jitter) -> SVGPField
+
+Convenience constructor for a multi-output SVGP field with `dout` independent outputs
+sharing one set of `M` inducing points `Z0` (in state space).
+
+Initial flat params:  `v0 = [logℓ0, logσ0, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`.
+`μ0 = 0` (prior mean); `L_S` diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0.
+`jitter` is a RELATIVE factor (σ²-scaled, not absolute) — default 1e-4 matches `L_ZZ_factor`.
+"""
+function SVGPField(kernel::Kernel, Z0::AbstractVector; dout::Int=1, mean=AbstractGPs.ZeroMean(),
+                   logℓ0=0.0, logσ0=0.0, jitter=1e-4)
+    M = length(Z0); D = length(first(Z0))
+    μ0  = zeros(M*dout)
+    # diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0; off-diag raw=0 as well
+    Ls0 = reduce(vcat, [vcat(zeros(M), zeros(nLS(M)-M)) for _ in 1:dout])
+    v0  = vcat(logℓ0, logσ0, reduce(vcat, Z0), μ0, Ls0)
+    SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
+end
+
+# Layout helpers — flat vector is [logℓ, logσ, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
+# jitter is fixed on the field (not a trained slot).
+
+"Offset into `v` where `Z` starts (after the 2 hyper params)."
+svgp_oZ() = 2
+
+"Extract inducing locations as a D×M matrix from flat param vector `v`."
+svgp_Z(f::SVGPField, v) = reshape(v[3 : 2+f.D*f.M], f.D, f.M)
+
+"Extract variational mean as an M×dout matrix from flat param vector `v`."
+svgp_μ(f::SVGPField, v) = reshape(v[3+f.D*f.M : 2+f.D*f.M+f.M*f.dout], f.M, f.dout)
+
+"Extract raw L_S flat vector for output `i` from flat param vector `v`."
+function svgp_Lsblk(f::SVGPField, v, i)
+    o = 2 + f.D*f.M + f.M*f.dout
+    v[o+(i-1)*nLS(f.M)+1 : o+i*nLS(f.M)]
+end
+
+# ---------------------------------------------------------------------------
 # Pure SVGP math — no SciML. Task 7.
 # ---------------------------------------------------------------------------
 
