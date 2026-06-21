@@ -355,8 +355,8 @@ function _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise)
                     Magpie._chol(Magpie.cov(g, g.x) + 1e-8 * I).L *
                     randn(MersenneTwister(sidx * 131 + i), length(g.x))
             Magpie.build_decoupled_sample(k, g.x, uvals;
-                                          ℓ=ℓ, σ=σ,
-                                          rng=MersenneTwister(sidx * 131 + i))
+                                          ℓ=ℓ, σ=σ,                       # decorrelate the RFF-phase RNG from the
+                                          rng=MersenneTwister(sidx * 131 + i + 500_000))  # inducing-draw RNG above
         end for (i, g) in enumerate(gps)]
         rhs!(du, u, p, t) = (for i in 1:d; du[i] = samplers[i](u); end; nothing)
         sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts)
@@ -403,7 +403,7 @@ function _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise)
             # Recover variational mean μ_i from the stored α = L_ZZ' \ μ_i.
             μ_i = g.L_ZZ' * g.α
             # Draw whitened v_s ~ N(μ_i, S) where S = L_S L_S'.
-            v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i), length(μ_i))
+            v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
             # Lift to inducing-value sample u_s = L_ZZ v_s.
             u_s = g.L_ZZ * v_s
             Magpie.build_decoupled_sample(k, g.Z, u_s;
