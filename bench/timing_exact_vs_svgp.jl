@@ -118,9 +118,9 @@ end
 println("└─────┴──────────────┴──────────────┴─────────────┴──────────────┘")
 
 # ---------------------------------------------------------------------------
-# Crossover assertion: at N=200, SVGP should allocate less than Exact (M=15 << N=200).
-# Allocations are more deterministic than wall-clock; use a tight check with no margin
-# (if SVGP allocates MORE than Exact at N=200, report DONE_WITH_CONCERNS instead of failing).
+# Crossover assertion: at N=200, SVGP should allocate well under Exact (M=15 << N=200).
+# Allocations are more deterministic than wall-clock; use a factor-2 margin (measured ratio ≈0.23,
+# so ample room) so the gate is robust to allocator/Julia-version drift, not a knife-edge.
 # ---------------------------------------------------------------------------
 exact_alloc_200 = exact_allocs[end]
 svgp_alloc_200  = svgp_allocs[end]
@@ -140,11 +140,9 @@ else
     println("  This is honest measurement — the scale_forcing example's claim needs a larger N or larger M_FIXED.")
 end
 
-# Hard assertion for the CI smoke gate (only fires if crossover holds; otherwise the script exits 0 with DONE_WITH_CONCERNS).
-# If you get DONE_WITH_CONCERNS here, comment out the @assert and add a note explaining the observed N.
-if svgp_alloc_200 < exact_alloc_200
-    @assert svgp_alloc_200 < exact_alloc_200 "SVGP should allocate less than Exact at N=200"
-    println("\n[CI gate] @assert passed.")
-end
+# Hard CI-gate assertion — fires UNCONDITIONALLY (unlike a no-op guarded by the crossover condition):
+# if SVGP ever fails to beat Exact by 2× at N=200, the bench fails loudly. Measured ratio ≈0.23.
+@assert svgp_alloc_200 < exact_alloc_200 / 2 "SVGP should allocate < half of Exact at N=200 (got ratio=$(round(ratio; digits=3)))"
+println("\n[CI gate] @assert passed (SVGP allocs < Exact/2 at N=200).")
 
 println("\nDone.")
