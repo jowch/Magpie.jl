@@ -6,4 +6,5 @@ using Test
     include("test_exemplar_A2.jl")
     include("test_gpude_unit.jl")
     include("test_exemplar_B_grad.jl")
+    get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_stage1.jl")
 end
