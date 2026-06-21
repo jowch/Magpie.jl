@@ -20,6 +20,6 @@ using Magpie: ExactGP, Straddle, ActiveLearner, observe!, run!, posterior_gp,
     @test concentr > 0.5      # queries near boundary
     Xall, Yall = all_data(al)                                                # loop == batch invariant
     Yall_f = Float64.(Yall)
-    gb = update(ExactGP(with_lengthscale(SqExponentialKernel(), _lengthscale(g.prior.kernel)); noise = 1.0e-4), Xall, Yall_f)
-    @test mean(g, grid[1:20]) ≈ mean(gb, grid[1:20]) rtol = 1.0e-6
+    gb = update(ExactGP(g.prior.kernel; noise=1e-4), Xall, Yall_f)   # full fitted kernel (ℓ and σ_f²)
+    @test mean(g, grid[1:20]) ≈ mean(gb, grid[1:20]) rtol=1e-6
 end

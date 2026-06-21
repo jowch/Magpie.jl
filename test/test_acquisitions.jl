@@ -1,5 +1,5 @@
 using Magpie, AbstractGPs, KernelFunctions, LinearAlgebra, ForwardDiff, Test
-using Magpie: ExactGP, Straddle, RandStraddle, resample
+using Magpie: ExactGP, Straddle, RandStraddle, GradStraddle, LocalPenalization, resample
 @testset "Straddle" begin
     g = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4), [[0.0], [1.0]], [0.0, 1.0])
     a = Straddle(h = 0.5); x = [0.3]
@@ -56,4 +56,16 @@ end
     @test a(g, [0.5, -0.3]) > a(g, [1.8, 1.8])   # higher near the zero than far in a corner
     p = acquire(g, a; over=Box([-2.0,-2.0],[2.0,2.0]))
     @test p isa AbstractVector && length(p) == 2
+end
+
+@testset "LocalPenalization soft-penalizes near observed points (radius ∝ ℓ)" begin
+    ℓ = 1.0
+    g = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), ℓ); noise=1e-4), [[0.0,0.0]], [0.0])
+    base = GradStraddle(β=1.96)
+    pts  = [[0.0, 0.0]]                                  # one observed point at the origin
+    lp   = LocalPenalization(base, pts; c=0.5, s=0.15)   # radius 0.5ℓ, softness 0.15ℓ
+    far  = [4.0, 4.0]; near = [0.05, 0.0]
+    @test lp(g, far)  ≈ base(g, far)  atol = 1e-6        # far beyond the radius → no penalty
+    @test lp(g, near) <  base(g, near) - 1.0             # inside the radius → strongly penalized
+    @test resample(lp) isa LocalPenalization              # resample preserves the wrapper
 end

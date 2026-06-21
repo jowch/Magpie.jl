@@ -1,12 +1,13 @@
 """
-    ActiveLearner{A}
+    ActiveLearner
 
 Mutable state for an active-learning run: the current GP, the acquisition, and the
 accumulated query history.
 
 # Fields
   - `gp`: the current [`AbstractGPModel`](@ref), replaced on each observation
-  - `acq`: the acquisition function of type `A`
+  - `acq`: the acquisition function (reassignable, e.g. to wrap it with
+    [`LocalPenalization`](@ref) over the live history)
   - `Xs`, `Ys`: accumulated query inputs and observed values, in query order
   - `acq_vals`: the acquisition score at each queried point
 
@@ -14,13 +15,14 @@ accumulated query history.
 
     ActiveLearner(gp, acq)
 
-Start a learner from an (optionally unconditioned) GP and an acquisition.
+Start a learner from an (optionally unconditioned) GP and an acquisition. Both `gp` and
+`acq` are abstractly typed so they can be replaced in place during a run.
 """
-mutable struct ActiveLearner{A}
-    gp::AbstractGPModel; acq::A
+mutable struct ActiveLearner
+    gp::AbstractGPModel; acq::AcquisitionFunction
     Xs::Vector{Any}; Ys::Vector{Any}; acq_vals::Vector{Float64}
 end
-ActiveLearner(gp, acq) = ActiveLearner{typeof(acq)}(gp, acq, Any[], Any[], Float64[])
+ActiveLearner(gp, acq) = ActiveLearner(gp, acq, Any[], Any[], Float64[])
 
 """The current posterior GP held by the learner."""
 posterior_gp(al::ActiveLearner) = al.gp

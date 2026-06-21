@@ -1,7 +1,14 @@
 using Optimization, OptimizationOptimJL, DifferentiationInterface
 
-# Recover ℓ from with_lengthscale(SqExponentialKernel(), ℓ) == SqExp ∘ ScaleTransform(1/ℓ).
+# Peel ScaledKernel/TransformedKernel wrappers to read hyperparameters.
+# ℓ from with_lengthscale(k, ℓ) == k ∘ ScaleTransform(1/ℓ); σ² from `c * k` == ScaledKernel.
 _lengthscale(k) = 1 / only(k.transform.s)
+_lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
+_outputscale(k) = 1.0
+_outputscale(k::KernelFunctions.ScaledKernel) = only(k.σ²) * _outputscale(k.kernel)
+_basekernel(k) = k
+_basekernel(k::KernelFunctions.TransformedKernel) = _basekernel(k.kernel)
+_basekernel(k::KernelFunctions.ScaledKernel) = _basekernel(k.kernel)
 
 @doc raw"""
     nlml(g::ExactGP) -> Real
@@ -25,33 +32,34 @@ end
 """
     fit(g::ExactGP; restarts=1, ad=AutoForwardDiff()) -> ExactGP
 
-Optimize the kernel lengthscale by minimizing [`nlml`](@ref) with LBFGS, returning a
-GP re-conditioned at the best lengthscale found.
+Optimize the kernel lengthscale `ℓ` and signal variance `σ_f²` by minimizing
+[`nlml`](@ref) with LBFGS, returning a GP re-conditioned at the best hyperparameters.
 
-Optimization runs in log-space (`logℓ`, unconstrained, bounded to `[-6, 6]`) so the
-recovered `ℓ = exp(logℓ)` stays positive. With `restarts > 1`, extra runs start from
-the initial `logℓ` jittered in log-space and the lowest-NLML result wins. `ad` selects
-the DifferentiationInterface backend for the gradient.
+Optimization runs in log-space (`[logℓ, logσ²]`, bounded to `[-6, 6]`) so both stay
+positive. The recovered kernel is `σ_f²·with_lengthscale(SqExponentialKernel(), ℓ)`.
+Fitting `σ_f²` (not just `ℓ`) calibrates the function scale, which the derivative/straddle
+acquisitions need — a unit-variance prior miscalibrates them on any non-unit-scale target.
+With `restarts > 1`, extra runs start from the initial point jittered in log-space and the
+lowest-NLML result wins. `ad` selects the DifferentiationInterface backend for the gradient.
 
 !!! note
-    v1 assumes the prior kernel is `with_lengthscale(SqExponentialKernel(), ℓ)`.
+    v1 assumes the prior kernel is a (scaled) `with_lengthscale(SqExponentialKernel(), ℓ)`.
 """
-function fit(g::ExactGP; restarts::Int = 1, ad = AutoForwardDiff())
-    @assert g.prior.kernel isa KernelFunctions.TransformedKernel "v1 fit assumes with_lengthscale(SqExponentialKernel(), ℓ)"
+function fit(g::ExactGP; restarts::Int=1, ad=AutoForwardDiff())
+    @assert _basekernel(g.prior.kernel) isa SqExponentialKernel "v1 fit assumes a (scaled) with_lengthscale(SqExponentialKernel(), ℓ)"
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
-    noise = g.noise
-    logℓ0 = log(_lengthscale(g.prior.kernel))
-    # Closure over a length-1 vector [logℓ]; kept AD-compatible (no ParameterHandling unflatten).
-    loss(flat, _) = nlml(update(ExactGP(with_lengthscale(SqExponentialKernel(), exp(only(flat))); noise = noise), X, y))
+    noise = g.noise; meanfn = g.prior.mean
+    p0 = [log(_lengthscale(g.prior.kernel)), log(_outputscale(g.prior.kernel))]
+    # p = [logℓ, logσ²]; closure stays AD-compatible (no ParameterHandling unflatten).
+    mkkernel(p) = exp(p[2]) * with_lengthscale(SqExponentialKernel(), exp(p[1]))
+    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise=noise, mean=meanfn), X, y))
     best = g; best_nlml = nlml(g)
     for r in 1:restarts
-        logℓ_start = r == 1 ? [logℓ0] : [logℓ0 + 0.1 * randn()]   # first run exact, rest jittered
-        prob = OptimizationProblem(OptimizationFunction(loss, ad), logℓ_start; lb = [-6.0], ub = [6.0])
+        start = r == 1 ? p0 : p0 .+ 0.1 .* randn(2)              # first run exact, rest jittered
+        prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb=[-6.0, -6.0], ub=[6.0, 6.0])
         sol = solve(prob, LBFGS())
-        gp_cand = update(ExactGP(with_lengthscale(SqExponentialKernel(), exp(only(sol.u))); noise = noise), X, y)
-        if nlml(gp_cand) < best_nlml
-            best, best_nlml = gp_cand, nlml(gp_cand)
-        end
+        gp_cand = update(ExactGP(mkkernel(sol.u); noise=noise, mean=meanfn), X, y)
+        if nlml(gp_cand) < best_nlml; best, best_nlml = gp_cand, nlml(gp_cand); end
     end
     return best
 end

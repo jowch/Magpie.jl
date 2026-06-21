@@ -1,4 +1,4 @@
-using StatsFuns: normcdf
+using StatsFuns: normcdf, normlogcdf
 
 """
     AcquisitionFunction
@@ -115,6 +115,46 @@ function (a::RandGradStraddle)(g, x)
     return sum(a.sβ * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
 end
 resample(a::RandGradStraddle) = RandGradStraddle(sqrt(-2*log(rand(a.rng))), a.rng)
+
+@doc raw"""
+    LocalPenalization(base, pts=[]; c=0.5, s=0.15) <: AcquisitionFunction
+
+Diversity wrapper around any `base` acquisition: discourages querying within ``\sim c\ell``
+of any point in `pts` (the observation history; ``\ell`` is the GP's fitted lengthscale).
+Each point adds a soft penalty to the score,
+
+```math
+\sum_j \log \Phi\!\left(\frac{\lVert x - x_j\rVert - c\,\ell}{s\,\ell}\right),
+```
+
+which is ``\approx 0`` far from `xⱼ` and strongly negative inside the radius. This breaks the
+deterministic-argmax **resampling collapse** — stacking queries at one point never resolves
+the gradient there, so a plain straddle can sample it indefinitely and starve coverage.
+
+In the active loop, pass the learner's **live** history so the penalty tracks new
+observations with no loop changes (`observe!` mutates `al.Xs` in place):
+
+```julia
+al.acq = LocalPenalization(al.acq, al.Xs)
+```
+
+Adapts Local Penalization (González et al. 2016, *Batch Bayesian Optimization via Local
+Penalization*) to gradient-zero / level-set search: the soft ``\Phi`` envelope is the same,
+but the radius is the lengthscale ``c\ell`` (a redundancy scale) rather than LP's
+optimum-seeking ``(M-\mu)/L``, which assumes a scalar being maximized — see the package
+notes for why that radius does not transfer to this objective.
+"""
+struct LocalPenalization{A<:AcquisitionFunction,P} <: AcquisitionFunction
+    base::A; pts::P; c::Float64; s::Float64
+end
+LocalPenalization(base::AcquisitionFunction, pts=Any[]; c::Real=0.5, s::Real=0.15) =
+    LocalPenalization(base, pts, float(c), float(s))
+function (a::LocalPenalization)(g, x)
+    isempty(a.pts) && return a.base(g, x)
+    ℓ = _lengthscale(g.prior.kernel); r = a.c*ℓ; sw = a.s*ℓ
+    return a.base(g, x) + sum(normlogcdf((norm(x .- p) - r)/sw) for p in a.pts)
+end
+resample(a::LocalPenalization) = LocalPenalization(resample(a.base), a.pts, a.c, a.s)
 
 @doc raw"""
     BinaryBALD <: AcquisitionFunction

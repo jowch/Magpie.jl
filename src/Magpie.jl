@@ -32,7 +32,7 @@ include("derivatives.jl"); include("acquisitions.jl"); include("maximize.jl"); i
 
 export AbstractGPModel, ExactGP, update, predmean, predict, nlml, grad_predict
 export LaplaceGP
-export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, GradStraddle, RandGradStraddle, resample
+export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, GradStraddle, RandGradStraddle, LocalPenalization, resample
 export Box, Points, SobolPolish, grid_points, acquire
 export ActiveLearner, observe!, fit!, run!, posterior_gp, queried_points, all_data
 
