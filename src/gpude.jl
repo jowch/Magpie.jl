@@ -53,7 +53,7 @@ struct ExactGPField{Tp,TZ} <: GPField
     n::Int           # number of anchors
     d::Int           # output dimension
     lognoise::Float64     # FIXED jitter on anchor values (the field is never observed; identifiability mech. 2)
-    v0::Vector{Float64}   # initial flat TRAINED params [logℓ, logσ, vec(w)] — lognoise is NOT trained here
+    v0::Vector{Float64}   # initial flat TRAINED params [logℓ, logσ, logσ_obs, vec(w)] — lognoise is NOT trained here
 end
 
 """Sparse variational GP as a full spine `AbstractGPModel` (per interface-design). Stores enough to
@@ -64,7 +64,14 @@ struct SparseGP{Tp,TZ,Tα,TL,TS} <: AbstractGPModel
     prior::Tp; Z::TZ; α::Tα; L_ZZ::TL; L_S::TS
 end
 
-"Flat-Vector layout helper for Stage-1/2 trained params `[logℓ, logσ, vec(w)]` (lognoise is fixed on the field)."
+# SINGLE SOURCE OF TRUTH for the hyper-prefix width. The trained vector ALWAYS begins
+# `[logℓ, logσ, logσ_obs, <field-specific>...]`. logσ_obs (index 3) is the observation-noise
+# log-std used ONLY by the data term (Gaussian NLL); it is NOT threaded into the solve param `pf`.
+# Every field-specific block offset is `NHYP + ...`, so inserting/removing a hyper slot touches
+# this one constant — no raw `v[3...]` index arithmetic survives downstream.
+const NHYP = 3
+
+"Flat-Vector layout helper for Stage-1/2 trained params `[logℓ, logσ, logσ_obs, vec(w)]` (lognoise is fixed on the field)."
 struct FieldLayout; n::Int; d::Int; end
 
 # Shooting + uncertainty selector types (named by users; methods live in the ext).
@@ -95,7 +102,7 @@ posterior(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using Ordinar
 
 """Multi-output SVGP field: ONE shared set of `M` inducing points `Z` (in state space), per-output
 variational `(μ, L_S)`, `dout` independent outputs. Trained vector (verified shared-Z layout):
-`[logℓ, logσ, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`; jitter is fixed on the field."""
+`[logℓ, logσ, logσ_obs, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`; jitter is fixed on the field."""
 struct SVGPField{Tp,TZ} <: GPField
     prior::Tp; Z0::TZ; M::Int; dout::Int; D::Int; jitter::Float64; v0::Vector{Float64}
 end
@@ -108,16 +115,17 @@ end
     ExactGPField(kernel, Z; d, mean, logℓ0, logσ0, lognoise)
 
 Convenience constructor. Builds the zero-mean prior and default flat params
-`v0 = [logℓ0, logσ0, zeros(n*d)]` (lognoise is NOT a trained slot).
+`v0 = [logℓ0, logσ0, logσ_obs0, zeros(n*d)]` (lognoise is NOT a trained slot; logσ_obs is the
+trained observation-noise log-std used by the Gaussian NLL data term, init `log(0.1)`).
 """
 # lognoise=log(1e-2): the fixed anchor-value jitter. 1e-2 (not 1e-4) keeps K_ZZ well-conditioned so the
 # Mooncake Cholesky-solve BACKWARD (potrs) doesn't hit SingularException when the optimizer explores
 # long lengthscales / near-duplicate anchors — `_chol(check=false)` only guards the forward. Verified:
 # 1e-2 removes the exception AND recovers LV better (sol_rmse 0.04 vs the fragile 1e-4).
 function ExactGPField(kernel::Kernel, Z; d::Int=1, mean=AbstractGPs.ZeroMean(),
-                      logℓ0=0.0, logσ0=0.0, lognoise=log(1e-2))
+                      logℓ0=0.0, logσ0=0.0, logσ_obs0=log(0.1), lognoise=log(1e-2))
     n = length(Z)
-    v0 = vcat(logℓ0, logσ0, zeros(n*d))      # lognoise is NOT a trained slot
+    v0 = vcat(logℓ0, logσ0, logσ_obs0, zeros(n*d))   # lognoise NOT trained; logσ_obs IS trained (data-term only)
     ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
 end
 
@@ -129,10 +137,12 @@ _kernel(logℓ, logσ) = exp(2logσ) * with_lengthscale(SqExponentialKernel(), e
 # inner TransformedKernel (with_lengthscale(...)); this peel forwards to that method.
 _lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
 
-# Layout accessors — trained vector is [logℓ, logσ, vec(w)]; lognoise lives on the field.
+# Layout accessors — trained vector is [logℓ, logσ, logσ_obs, vec(w)]; lognoise lives on the field.
 nw(L::FieldLayout) = L.n * L.d
-hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2])
-wmat(L::FieldLayout, v) = reshape(v[3:2+nw(L)], L.n, L.d)
+# hyp exposes ALL three hyper slots; logσ_obs is consumed only by the data term (not the solve pf).
+hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2], logσ_obs=v[3])
+# w-block lives AFTER the hyper prefix: indices NHYP+1 .. NHYP+nw.
+wmat(L::FieldLayout, v) = reshape(v[NHYP+1 : NHYP+nw(L)], L.n, L.d)
 
 # --- GPField protocol: ExactGPField (layout [logℓ, logσ, vec(w)]; lognoise fixed on field) ---
 
@@ -143,7 +153,8 @@ Flat trained vector → named params. `w` is an `n×d` matrix of anchor weights.
 """
 function unpack(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d)
-    (logℓ=v[1], logσ=v[2], w=wmat(L, v))
+    h = hyp(L, v)
+    (logℓ=h.logℓ, logσ=h.logσ, logσ_obs=h.logσ_obs, w=wmat(L, v))
 end
 
 """
@@ -195,45 +206,52 @@ end
 Convenience constructor for a multi-output SVGP field with `dout` independent outputs
 sharing one set of `M` inducing points `Z0` (in state space).
 
-Initial flat params:  `v0 = [logℓ0, logσ0, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`.
-`μ0 = 0` (prior mean); `L_S` diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0.
+Initial flat params:  `v0 = [logℓ0, logσ0, logσ_obs0, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`.
+`μ0 = 0` (prior mean); `L_S` diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0. `logσ_obs0=log(0.1)` is the trained
+observation-noise log-std used by the Gaussian NLL data term (NOT the kzz conditioning jitter).
 `jitter` is a RELATIVE factor (σ²-scaled, not absolute) — default 1e-4 matches `L_ZZ_factor`.
 """
 function SVGPField(kernel::Kernel, Z0::AbstractVector; dout::Int=1, mean=AbstractGPs.ZeroMean(),
-                   logℓ0=0.0, logσ0=0.0, jitter=1e-4)
+                   logℓ0=0.0, logσ0=0.0, logσ_obs0=log(0.1), jitter=1e-4)
     M = length(Z0); D = length(first(Z0))
     μ0  = zeros(M*dout)
     # diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0; off-diag raw=0 as well
     Ls0 = reduce(vcat, [vcat(zeros(M), zeros(nLS(M)-M)) for _ in 1:dout])
-    v0  = vcat(logℓ0, logσ0, reduce(vcat, Z0), μ0, Ls0)
+    v0  = vcat(logℓ0, logσ0, logσ_obs0, reduce(vcat, Z0), μ0, Ls0)
     SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
 end
 
-# Layout helpers — flat vector is [logℓ, logσ, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
-# jitter is fixed on the field (not a trained slot).
+# Layout helpers — flat vector is [logℓ, logσ, logσ_obs, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
+# jitter is fixed on the field (not a trained slot); logσ_obs (index 3, the NHYP prefix) is the
+# data-term observation noise (not threaded into the SVGP solve pf). Block sizes:
+#   Z:  D·M     (starts at NHYP+1)
+#   μ:  M·dout  (starts after Z)
+#   L_S: dout·nLS(M) (starts after μ)
+# All offsets route through NHYP — no raw `v[3...]` index arithmetic survives. The svgp_* accessors
+# below are themselves the SVGP-layout source of truth (each block offset is computed from NHYP).
 
 "Extract inducing locations as a D×M matrix from flat param vector `v`."
-svgp_Z(f::SVGPField, v) = reshape(v[3 : 2+f.D*f.M], f.D, f.M)
+svgp_Z(f::SVGPField, v) = reshape(v[NHYP+1 : NHYP+f.D*f.M], f.D, f.M)
 
 "Extract variational mean as an M×dout matrix from flat param vector `v`."
-svgp_μ(f::SVGPField, v) = reshape(v[3+f.D*f.M : 2+f.D*f.M+f.M*f.dout], f.M, f.dout)
+svgp_μ(f::SVGPField, v) = reshape(v[NHYP+f.D*f.M+1 : NHYP+f.D*f.M+f.M*f.dout], f.M, f.dout)
 
 "Extract raw L_S flat vector for output `i` from flat param vector `v`."
 function svgp_Lsblk(f::SVGPField, v, i)
-    o = 2 + f.D*f.M + f.M*f.dout
+    o = NHYP + f.D*f.M + f.M*f.dout
     v[o+(i-1)*nLS(f.M)+1 : o+i*nLS(f.M)]
 end
 
 # --- GPField protocol: SVGPField (layout [logℓ, logσ, vec(Z), vec(μ), vec(L_S)]; jitter fixed) ---
 
 """
-    unpack(field::SVGPField, v) -> (logℓ, logσ, Z, μ, Ls)
+    unpack(field::SVGPField, v) -> (logℓ, logσ, logσ_obs, Z, μ, Ls)
 
 Flat trained vector → named params. `Z` is `D×M`, `μ` is `M×dout`,
 `Ls` is a `Vector` of `dout` `LowerTriangular` variational Cholesky factors.
 """
 function unpack(field::SVGPField, v)
-    (logℓ=v[1], logσ=v[2], Z=svgp_Z(field, v), μ=svgp_μ(field, v),
+    (logℓ=v[1], logσ=v[2], logσ_obs=v[3], Z=svgp_Z(field, v), μ=svgp_μ(field, v),
      Ls=[unpack_LS(svgp_Lsblk(field, v, i), field.M) for i in 1:field.dout])
 end
 

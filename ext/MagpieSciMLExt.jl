@@ -38,8 +38,12 @@ Build the scalar GP-UDE loss `v -> shooting_data_term(...) + regularizer(field, 
 term and the regularizer split cleanly: the regularizer (priors + SVGP KL) is evaluated once
 per `v`, outside any trajectory/segment loop.
 """
+# logσ_obs (the Gaussian-NLL observation-noise log-std) lives at index NHYP of `v` and is consumed
+# ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v` and threads it
+# into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via the trailing kw...).
 field_loss(field, shooting, data; kw...) =
-    v -> shooting_data_term(field, shooting, field_rhs(field, v), data; kw...) +
+    v -> shooting_data_term(field, shooting, field_rhs(field, v), data;
+                            logσ_obs=v[Magpie.NHYP], kw...) +
          Magpie.regularizer(field, v; kw...)
 
 # --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
@@ -116,54 +120,65 @@ end
 # `data` is always a Vector{<:Tuple} of (ts, X); single-shooting = a 1-element vector.
 
 """
-    shooting_data_term(field, ::SingleShooting, (pf, rhs!), data; u0, tspan, ...) -> Real
+    shooting_data_term(field, ::SingleShooting, (pf, rhs!), data; logσ_obs, u0, tspan, ...) -> Real
 
-Single-shooting data fit: for each `(ts, X)` in `data`, integrate the RHS over `tspan` saving at
-`ts` and accumulate `‖Array(sol) − X‖²` (R2: `Array(sol)`, never `sol[:,i]`). For single
-trajectories `u0` defaults to the first data column.
+Single-shooting data fit (Gaussian NLL): for each `(ts, X)` in `data`, integrate the RHS over
+`tspan` saving at `ts` (R2: `Array(sol)`, never `sol[:,i]`) and accumulate
+`Σ (Aᵢ−Xᵢ)²/(2σ_obs²)`; add the normalizer `(Nd/2)·log(2π σ_obs²)` once over all scalar
+observations. `σ_obs² = exp(2·logσ_obs)`. logσ_obs is the trained observation-noise log-std
+(separate from the K_ZZ conditioning jitter). For single trajectories `u0` defaults to col 1.
 """
 function shooting_data_term(field, ::Magpie.SingleShooting, (pf, rhs!), data;
-                            u0=nothing, tspan=nothing, known_physics=(u,t)->zero(u),
+                            logσ_obs, u0=nothing, tspan=nothing, known_physics=(u,t)->zero(u),
                             solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
     T = eltype(pf)
-    acc = zero(T)
+    σ2 = exp(2*logσ_obs)
+    sse = zero(T)
+    Nd  = 0
     for (ts, X) in data
         ic  = u0 === nothing ? collect(X[:, 1]) : u0
         tsp = tspan === nothing ? (first(ts), last(ts)) : tspan
         sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat=ts, sensealg)
         A = Array(sol)                                  # R2: Array(sol), never sol[:,i]
         size(A) == size(X) || return convert(T, 1e6)    # divergence guard → finite sentinel
-        acc += sum(abs2, A .- X)
+        sse += sum(abs2, A .- X)
+        Nd  += length(X)
     end
-    return acc
+    # Gaussian NLL: SSE/(2σ²) + (Nd/2)·log(2π σ²). σ_obs is scale-not-ratio (identifiable).
+    return sse/(2σ2) + (Nd/2)*log(2π*σ2)
 end
 
 """
-    shooting_data_term(field, ms::MultipleShooting, (pf, rhs!), data; tspan, s0, ...) -> Real
+    shooting_data_term(field, ms::MultipleShooting, (pf, rhs!), data; logσ_obs, tspan, s0, ...) -> Real
 
 Multiple-shooting data fit over a single trajectory `data == [(ts, X)]`: splits into `ms.nsegments`
-segments with free per-segment initial nodes `s0` (d×S), accumulating endpoint mismatch +
-continuity penalty `ms.λ` + node-0 anchor penalty `ms.λ0`. `s0` is supplied by the caller (it
-lives in the trained vector, so the loss extracts it once and passes it here).
+segments with free per-segment initial nodes `s0` (d×S). The endpoint-vs-data misfit is the Gaussian
+NLL (`Σ(endp−X)²/(2σ_obs²) + (Sd/2)·log(2π σ_obs²)`, σ_obs²=exp(2·logσ_obs)) — identical to single
+shooting; the continuity penalty `ms.λ` and node-0 anchor penalty `ms.λ0` are soft constraints (own
+weights), not data likelihood, so they stay un-scaled. `s0` is supplied by the caller.
 """
 function shooting_data_term(field, ms::Magpie.MultipleShooting, (pf, rhs!), data;
-                            s0, known_physics=(u,t)->zero(u),
+                            logσ_obs, s0, known_physics=(u,t)->zero(u),
                             solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
     (ts, X) = only(data)
     S = ms.nsegments
     seg_idx = round.(Int, range(1, length(ts); length=S+1))
     seg_t   = [ts[i] for i in seg_idx]
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
+    σ2 = exp(2*logσ_obs)
     dataerr = cont = zero(eltype(pf))
+    Nd = 0
     for i in 1:S
         sol  = solve(ODEProblem(f!, s0[:, i], (seg_t[i], seg_t[i+1]), pf), solver;
                      saveat=[seg_t[i+1]], sensealg)
         endp = Array(sol)[:, end]                        # R2: Array(sol) before indexing
         dataerr += sum(abs2, endp .- X[:, seg_idx[i+1]])
+        Nd += length(endp)
         i < S && (cont += sum(abs2, endp .- s0[:, i+1]))
     end
-    return dataerr + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1])
+    # Gaussian NLL on the data-misfit term (matches SingleShooting); penalties keep their own weights.
+    return dataerr/(2σ2) + (Nd/2)*log(2π*σ2) + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1])
 end
 
 # ---------------------------------------------------------------------------
@@ -182,17 +197,20 @@ function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw
     field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0=u0, tspan=tspan, kw...)
 end
 
-# Stage-2 multiple shooting. The trained vector is [logℓ, logσ, vec(w), vec(s0)] (s0 is d×S);
+# Stage-2 multiple shooting. The trained vector is [logℓ, logσ, logσ_obs, vec(w), vec(s0)] (s0 is d×S);
 # the loss extracts s0 from `v` then forwards to shooting_data_term. Old MS reg was logℓ-only
-# (no λσ term) — preserved by passing λσ=0.0 to the field regularizer.
+# (no λσ term) — preserved by passing λσ=0.0 to the field regularizer. The s0 block starts AFTER the
+# hyper prefix + the w-block: offset NHYP + nwL (routed through Magpie.NHYP — no hardcoded 3).
 function build_loss(field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
                     ms::Magpie.MultipleShooting; kw...)
     S   = ms.nsegments
     nwL = L.n * L.d
+    off = Magpie.NHYP + nwL                                     # s0 starts after [logℓ,logσ,logσ_obs,vec(w)]
     regkw = merge((λσ=0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
     return function loss(v)
-        s0 = reshape(v[3+nwL : 2+nwL + field.d*S], field.d, S)   # s0 after [logℓ,logσ,vec(w)]
-        shooting_data_term(field, ms, field_rhs(field, v), [(collect(t_data), u_data)]; s0=s0, kw...) +
+        s0 = reshape(v[off+1 : off + field.d*S], field.d, S)
+        shooting_data_term(field, ms, field_rhs(field, v), [(collect(t_data), u_data)];
+                           s0=s0, logσ_obs=v[Magpie.NHYP], kw...) +
             Magpie.regularizer(field, v; regkw...)
     end
 end
