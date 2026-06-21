@@ -163,3 +163,45 @@ maximum at (−0.2708,−0.9230) (f≈181.6), 4 saddles. Observe f only, run the
   `ε_morse` classification threshold to avoid mislabeling).
 - Whether the active loop places enough data near saddles/maximum (not just minima) for
   the mean Hessian to classify them correctly — if not, increase budget or seed coverage.
+
+## Post-exploration revision (2026-06-21)
+
+Implementing Task 4 (Himmelblau exemplar) surfaced that the original target was the wrong
+shape, and a controlled diagnosis re-scoped the example. Recorded honestly:
+
+**Himmelblau does not work as a *single-assertion* active exemplar — and the bottleneck is
+the acquisition, not the kernel/extraction.** Layer-by-layer, controlled (active vs.
+uniform-random, budget-swept, coverage-measured):
+- **Kernel ✓** — RBF on a dense grid recovers all 9 (incl. the sharp minima). The earlier
+  "stationary RBF can't represent the minima" guess was *wrong*; it was the extraction.
+- **Extraction** — the CI candidate-filter (`|μ∇| ≤ β√Σ`) is **brittle under near-
+  interpolation** (`Σ_∇→0` shrinks the band to ~0, rejecting grid points *near* a sharp
+  minimum). Newton-polish-from-grid (no CI gate) is more robust. The shipped `critical_points`
+  keeps the CI-filter because it is clean on the smooth cosine; Newton-from-grid is the
+  documented upgrade for harder landscapes.
+- **Budget ✗ not it** — uniform random recovers 9/9 at ~230 points.
+- **Acquisition = the frontier.** Deterministic `GradStraddle` **mode-collapses** on
+  Himmelblau (the constant `−|μ∇|` term pins the argmax to one region on steep walls):
+  coverage **1/9** even at 630 samples. Two coverage-forcing cures: **randomization**
+  (`RandGradStraddle`, ~6/9 mean) and **Inatsu CI-eviction** (7/9, self-terminates early →
+  lower recall). Neither matches uniform random's 9/9 — the residual exploit bias is open work.
+
+**Revised deliverable (implemented):**
+- **Primary exemplar:** `cos(x)+cos(y)` on `[-4,4]²` — smooth, single-scale, analytic 9
+  critical points (4 min/1 max/4 saddle). Active loop with `GradStraddle` + `refit_every`
+  recovers **9/9**, zero spurious. This is the clean active-learning success.
+- **`RandGradStraddle`** (`src/acquisitions.jl`): randomized-band gradient straddle mirroring
+  `RandStraddle`; the buildable anti-mode-collapse demonstration.
+- **Himmelblau stress-case** (exemplar): asserts the coverage ordering (det ≤2 < rand <
+  random ≥8), documenting the acquisition frontier honestly rather than hiding it.
+
+**Other learnings (documented, not built):**
+- **Observation standardization** (z-score, or `log1p` for non-negative wide-range `f`) is a
+  precondition the original spec omitted — essential for large-dynamic-range targets; it is
+  location/Morse-type-preserving (affine/monotone), so `critical_points` is unchanged.
+- **KernelFunctions (v0.10.67) has no derivative-kernel type**, but its kernels are
+  AD-differentiable in their inputs — an **AD-generic `grad_predict`** (ForwardDiff on the
+  kernel) would support any kernel (e.g. Matérn-5/2) without hand-derived blocks, *except*
+  the `r=0` prior-variance term (Matérn `‖·‖` singularity → NaN; needs the analytic constant
+  `5/3ℓ²`). A future extension; RBF stays the v1 path.
+- Matérn was a red herring for Himmelblau's minima (the kernel was never the problem).
