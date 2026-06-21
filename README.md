@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/src/assets/logo.svg" alt="Magpie.jl" width="220"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/src/assets/logo-dark.svg"/>
+    <img src="docs/src/assets/logo.svg" alt="Magpie.jl" width="220"/>
+  </picture>
 </p>
 
 <h1 align="center">Magpie.jl</h1>

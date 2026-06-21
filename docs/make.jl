@@ -23,6 +23,7 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "Examples" => [title => "generated/$(first(splitext(src))).md" for (title, src) in EXAMPLES],
+        "API Reference" => "api.md",
     ],
     format = Documenter.HTML(; prettyurls = get(ENV, "CI", "false") == "true"),
     warnonly = [:missing_docs],

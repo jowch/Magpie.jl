@@ -1,3 +1,23 @@
+"""
+    Magpie
+
+Composable Gaussian processes for active learning and dynamics, built on
+[AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) and
+[KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl).
+
+A GP here is a differentiable, uncertainty-aware component: it composes with
+autodiff (Mooncake), SciML, and the rest of the Julia ecosystem rather than
+reinventing the GP core.
+
+Two capabilities share one incrementally-updated GP spine:
+
+  - **Active learning** — a `fit → acquire → observe → update` loop with level-set
+    and classification-boundary acquisitions ([`Straddle`](@ref), [`BinaryBALD`](@ref)).
+  - **GP-in-SciML** *(next milestone)* — a GP as the right-hand side of an ODE.
+
+The extension point is [`AbstractGPModel`](@ref); the bundled implementations are
+[`ExactGP`](@ref) (exact regression) and [`LaplaceGP`](@ref) (binary classification).
+"""
 module Magpie
 
 using LinearAlgebra, Statistics, Random

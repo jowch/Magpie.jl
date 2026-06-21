@@ -4,7 +4,10 @@ CurrentModule = Magpie
 
 # Magpie.jl
 
-![Magpie.jl logo](assets/logo.svg)
+```@raw html
+<img class="docs-light-only" src="assets/logo.svg" alt="Magpie.jl logo" width="240"/>
+<img class="docs-dark-only" src="assets/logo-dark.svg" alt="Magpie.jl logo" width="240"/>
+```
 
 *Composable Gaussian processes for active learning and dynamics —
 a GP as a differentiable, uncertainty-aware component.*
