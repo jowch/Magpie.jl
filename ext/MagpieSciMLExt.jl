@@ -295,7 +295,9 @@ function pull_propagate(gps, u0, ts; buffer::Int=20)
             end
             Dn .*= h
         end
-        Σ = Matrix(Symmetric(A*Σ*A' + h .* Matrix(V) + h .* (A*Dn + Dn'*A')))
+        # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
+        # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
+        Σ = Matrix(Symmetric(A*Σ*A' + h^2 .* Matrix(V) + h .* (A*Dn + Dn'*A')))
         for k in 1:d; Σ[k,k] < 0 && (@warn "PULL: negative variance clamped" step=n; Σ[k,k]=eps()); end
         μ = μ + h .* field_mean(gps, μ)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
