@@ -291,6 +291,8 @@ function pull_propagate(gps, u0, ts; buffer::Int=20)
                 # Independent outputs ⇒ diagonal: cov(gps[k], [μ_i], [μ_n]) per output k.
                 covf = Diagonal([only(AbstractGPs.cov(gps[k], [histμ[i]], [μ])) for k in 1:d])
                 Dn += prodA * covf
+                # walk the telescoped product right-to-left: histA[i-1] is the step i-1→i factor A_{i-1},
+                # so prodA accumulates ∏_{k=i-1}^{n-1} A_k for the next (earlier) i (eq 37 propagation product).
                 i > lo && (prodA = prodA * histA[i-1])
             end
             Dn .*= h

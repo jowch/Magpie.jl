@@ -137,9 +137,6 @@ end
 # Layout helpers — flat vector is [logℓ, logσ, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
 # jitter is fixed on the field (not a trained slot).
 
-"Offset into `v` where `Z` starts (after the 2 hyper params)."
-svgp_oZ() = 2
-
 "Extract inducing locations as a D×M matrix from flat param vector `v`."
 svgp_Z(f::SVGPField, v) = reshape(v[3 : 2+f.D*f.M], f.D, f.M)
 
