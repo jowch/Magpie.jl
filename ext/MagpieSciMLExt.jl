@@ -11,6 +11,7 @@ import DifferentiationInterface as DI
 import Mooncake
 import Optimization
 import OptimizationOptimJL: LBFGS
+import OptimizationOptimisers: Adam
 
 # MooncakeVJP is UNEXPORTED — bind once (SciMLSensitivityMooncakeExt auto-fires; Mooncake is a core hard dep).
 const MOONCAKEVJP = SciMLSensitivity.MooncakeVJP()
@@ -27,9 +28,10 @@ function make_loss(field::ExactGPField, L::FieldLayout, u0, tspan, ts, X;
         α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED
         pf = vcat(h.logℓ, h.logσ, vec(α))
         sol = solve(ODEProblem(rhs!, u0, tspan, pf), solver; saveat=ts, sensealg)
-        data = sum(abs2, Array(sol) .- X)              # R2: Array(sol), never sol[:,i]
+        A = Array(sol)                                 # R2: Array(sol), never sol[:,i]
+        size(A) == size(X) || return convert(eltype(v), 1e6)  # divergence guard: failed/short solve → finite sentinel
         reg = λ*(h.logℓ - logℓ_ref)^2/(2s^2) + λσ*h.logσ^2/(2sσ^2)
-        return data + reg
+        return sum(abs2, A .- X) + reg
     end
 end
 
@@ -61,15 +63,23 @@ end
 # train!: optimizer driver — Optimization.jl + LBFGS, outer Mooncake
 # ---------------------------------------------------------------------------
 
+# Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
+# ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
 function Magpie.train!(field::ExactGPField, (t_data, u_data);
                        tspan=(first(t_data), last(t_data)), known_physics=(u,t)->zero(u),
                        solver=Tsit5(), sensealg=DEFAULT_SENSEALG, shooting=Magpie.SingleShooting(),
-                       ad=DI.AutoMooncake(; config=nothing), optimizer=LBFGS(), maxiters=200, kw...)
+                       ad=DI.AutoMooncake(; config=nothing),
+                       adam_lr=0.05, adam_iters=1000, optimizer=LBFGS(), maxiters=200, kw...)
     L = FieldLayout(field.n, field.d)
     loss = build_loss(field, L, u_data, t_data, tspan, shooting; known_physics, solver, sensealg, kw...)
     v_init = _init_vec(field, u_data, t_data, shooting)
     optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
-    sol  = Optimization.solve(Optimization.OptimizationProblem(optf, v_init), optimizer; maxiters)
+    v = v_init
+    if adam_iters > 0
+        s1 = Optimization.solve(Optimization.OptimizationProblem(optf, v), Adam(adam_lr); maxiters=adam_iters)
+        v = s1.u
+    end
+    sol = Optimization.solve(Optimization.OptimizationProblem(optf, v), optimizer; maxiters)
     field.v0 .= sol.u[1:length(field.v0)]          # store FIELD prefix; drop s0 for MultipleShooting
     return field, sol.u
 end
@@ -87,11 +97,12 @@ Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior_gps(field, field.v0
 function Magpie.posterior_gps(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d); h = Magpie.hyp(L, v)
     k = Magpie._kernel(h.logℓ, h.logσ)
-    K = kernelmatrix(k, field.Z) + exp(field.lognoise) * I    # lognoise is on the field, not in v
+    jit = exp(field.lognoise + 2*h.logσ)          # RELATIVE jitter — must match solve_alpha so α == the trained field's
+    K = kernelmatrix(k, field.Z) + jit * I
     C = _chol(K)
     α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
     prior = AbstractGPs.GP(field.prior.mean, k)
-    return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], exp(field.lognoise)) for i in 1:field.d]
+    return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
 end
 
 end # module

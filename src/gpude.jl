@@ -58,8 +58,12 @@ end
 Convenience constructor. Builds the zero-mean prior and default flat params
 `v0 = [logℓ0, logσ0, zeros(n*d)]` (lognoise is NOT a trained slot).
 """
+# lognoise=log(1e-2): the fixed anchor-value jitter. 1e-2 (not 1e-4) keeps K_ZZ well-conditioned so the
+# Mooncake Cholesky-solve BACKWARD (potrs) doesn't hit SingularException when the optimizer explores
+# long lengthscales / near-duplicate anchors — `_chol(check=false)` only guards the forward. Verified:
+# 1e-2 removes the exception AND recovers LV better (sol_rmse 0.04 vs the fragile 1e-4).
 function ExactGPField(kernel::Kernel, Z; d::Int=1, mean=AbstractGPs.ZeroMean(),
-                      logℓ0=0.0, logσ0=0.0, lognoise=log(1e-4))
+                      logℓ0=0.0, logσ0=0.0, lognoise=log(1e-2))
     n = length(Z)
     v0 = vcat(logℓ0, logσ0, zeros(n*d))      # lognoise is NOT a trained slot
     ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
@@ -81,7 +85,10 @@ Call INSIDE the loss so `∂α/∂θ` stays alive through autodiff.
 """
 function solve_alpha(field::ExactGPField, logℓ, logσ, lognoise, w)
     k = _kernel(logℓ, logσ)
-    K = kernelmatrix(k, field.Z) + exp(lognoise) * I
+    # RELATIVE jitter exp(lognoise)·σ² (σ²=exp(2logσ) is the kernel diagonal). Scaling with σ² bounds
+    # cond(K_ZZ) ≈ 1 + n/exp(lognoise) regardless of how far logσ/logℓ drift — an ABSOLUTE jitter goes
+    # negligible once logσ grows, and the Mooncake Cholesky-solve BACKWARD then throws SingularException.
+    K = kernelmatrix(k, field.Z) + exp(lognoise + 2*logσ) * I
     return _chol(K) \ w
 end
 
