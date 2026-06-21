@@ -8,6 +8,7 @@ using Test
     include("test_gpude_svgp.jl")
     include("test_exemplar_B_grad.jl")
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_stage1.jl")
+    get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_protocol.jl")
     # NOTE: the slow LV end-to-end recovery is gated by examples/gp_ude_lotka_volterra.jl's #src
     # assertion (run in CI's docs-examples job), not a standalone test — see the plan's Stage-1 re-plan.
     get(ENV,"MAGPIE_TEST_SCIML","")=="true" && include("test_gpude_stage2.jl")

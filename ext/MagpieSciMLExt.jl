@@ -45,6 +45,25 @@ field_loss(field, shooting, data; kw...) =
 # --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
 
 """
+    field_rhs(cf::CompositeField, v) -> (pf, rhs!)
+
+Build the CompositeField RHS: delegates α/Cholesky to the inner GP field's `field_rhs` and
+wraps the returned closure so it does `du .= cf.known(u,t)` FIRST, then adds the GP residual.
+α is threaded in `pf` via the inner field — never closure-captured (R1).
+The `known` closure is called every RHS evaluation but carries no trained params.
+"""
+function field_rhs(cf::Magpie.CompositeField, v)
+    pf, inner_rhs! = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf
+    known = cf.known                         # do NOT closure-capture α or pf — only the fixed known fn
+    function rhs!(du, u, _pf, t; known_physics=(u,t)->zero(u))
+        du .= known(u, t)                    # known physics first (baked in; ignores kwarg known_physics)
+        du .+= gpfield(cf.gp, u, _pf)       # GP residual (α threaded in _pf, R1)
+        return nothing
+    end
+    return (pf, rhs!)
+end
+
+"""
     field_rhs(field::ExactGPField, v) -> rhs!
 
 Build the ExactGPField RHS at trained params `v`: solves `α = (K_ZZ + σ_n² I)⁻¹ w` in-loss
@@ -212,10 +231,19 @@ end
 _train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; kw...) =
     svgp_elbo_loss(field, trajs; tspan, kw...)
 
+# CompositeField: forward to field_loss (field_rhs for CompositeField is defined above).
+# The trained-vector layout IS the inner gp's (CompositeField delegates all layout to cf.gp).
+function _train_loss(cf::Magpie.CompositeField, trajs, shooting, tspan; kw...)
+    field_loss(cf, shooting, trajs; tspan=tspan, kw...)
+end
+
 # Per-field initial optimisation vector (Exact MS appends per-segment s0 nodes; SVGP = field.v0).
 _train_init(field::ExactGPField, trajs, shooting) =
     (tu = only(trajs); _init_vec(field, tu[2], tu[1], shooting))
 _train_init(field::SVGPField, trajs, ::Magpie.SingleShooting) = copy(field.v0)
+# CompositeField: delegates to the inner gp's v0 (layout is identical).
+_train_init(cf::Magpie.CompositeField, trajs, shooting) =
+    (tu = only(trajs); _init_vec(cf.gp, tu[2], tu[1], shooting))
 
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
@@ -248,6 +276,9 @@ end
 # `function posterior` here would create MagpieSciMLExt.posterior and shadow it, leaving the
 # public `Magpie.posterior` with only the "not loaded" stub. Same for the aliases below.
 Magpie.posterior(field::GPField) = Magpie.posterior(field, field.v0)
+
+# CompositeField: posterior IS the residual GP (the trained part). `known` is fixed, not returned.
+Magpie.posterior(cf::Magpie.CompositeField, v) = Magpie.posterior(cf.gp, v)
 
 # ExactGPField → d single-output ExactGPs. Relative jitter must match solve_alpha so α == trained α.
 function Magpie.posterior(field::ExactGPField, v)

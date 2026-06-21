@@ -15,6 +15,34 @@ the loss is `field_loss(field, shooting, data) = shooting_data_term(...) + regul
 """
 abstract type GPField end
 
+"""
+    CompositeField(known, gp)
+
+A UDE field that decomposes as `f(u,t) = known(u,t) + gp(u)`, where `known` is a fixed
+(u,t)->du function supplying the known-physics part and `gp` is a trainable `GPField`
+learning the residual.
+
+Protocol delegates entirely to `gp`: `unpack`, `regularizer`, and `posterior` forward to `cf.gp`.
+The `field_rhs` in the extension bakes `known` into the closure so the returned `rhs!` does:
+    du .= cf.known(u, t); du .+= gpfield(cf.gp, u, pf)
+This is the proven `du .= known; du .+= gp` ordering, and α stays threaded in `pf` (R1).
+"""
+struct CompositeField{Kf,Gf<:GPField} <: GPField
+    known::Kf   # (u,t) -> du_known  (fixed, not trained)
+    gp::Gf      # the residual GP field that is trained
+end
+
+# Protocol delegation — CompositeField trains only the inner gp.
+unpack(cf::CompositeField, v)           = unpack(cf.gp, v)
+regularizer(cf::CompositeField, v; kw...) = regularizer(cf.gp, v; kw...)
+
+# v0 accessor: CompositeField is transparent — its trained-vector layout IS the inner gp's.
+# (train! and _init_vec read field.v0 directly, so forward the property.)
+Base.getproperty(cf::CompositeField, s::Symbol) =
+    s === :known ? getfield(cf, :known) :
+    s === :gp    ? getfield(cf, :gp)   :
+    getproperty(getfield(cf, :gp), s)   # forward n, d, v0, lognoise, etc. to inner gp
+
 """Trainable GP-UDE field: one shared kernel + fixed anchors `Z`, `d` independent outputs."""
 struct ExactGPField{Tp,TZ} <: GPField
     prior::Tp        # AbstractGPs.GP (mean + kernel); kernel hypers are overridden per-eval from pf
