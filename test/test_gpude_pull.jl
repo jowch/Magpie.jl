@@ -3,6 +3,75 @@ using OrdinaryDiffEq, SciMLSensitivity
 import ForwardDiff
 using Magpie: ExactGP, SparseGP, SVGPField, ExactGPField, update, predmean, PULL, Pathwise, propagate
 
+# ---------------------------------------------------------------------------
+# Helpers for the per-step Dₙ oracle test (nonlinear field, brute-force ref).
+# ---------------------------------------------------------------------------
+
+# Build an ExactGP trained on f(x) ≈ -x + 0.5x² (nonlinear, so J(μₙ) varies along path).
+function _nonlinear_field()
+    xs = range(-2.0, 2.0; length=16)
+    Z  = [[x] for x in xs]
+    ys = [-x + 0.5*x^2 for x in xs]
+    k  = Magpie._kernel(log(0.8), 0.0)
+    gp = update(ExactGP(k; noise=1e-6), Z, ys)
+    return [gp]   # 1-output field (d=1)
+end
+
+# Brute-force Dₙ reference (no shared code with pull_propagate's telescope):
+#   Dₙ = h · Σᵢ₌₀^{n-1} (∏_{k=i+1}^{n-1} Aₖ) · cov_f(μᵢ, μ_current)
+# where μ_current is the mean at step n BEFORE the Euler advance, matching the
+# convention in pull_propagate / _pull_Dn_sequence. The product order follows the
+# recurrence δ_{n+1} = Aₙδₙ + hνₙ: nearest-past term (i=n-1) has empty product = I.
+#
+# Implementation: forward pass collects allμ[j]=μ_{j-1} (BEFORE Euler, 1-indexed) and
+# allA[j]=A at state j-1. For step n, μ_current = allμ[n] and past states = allμ[1..n-1].
+function _bruteforce_Dn(gps, u0, ts; buffer=length(ts))
+    d   = length(u0)
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    # Forward pass: collect all pre-Euler mean states and Jacobian factors.
+    allμ_pre = Vector{Vector{Float64}}()   # allμ_pre[n] = μ_{n-1} (state at start of iteration n)
+    allA     = Vector{Matrix{Float64}}()   # allA[n] = A_{n-1} = I + h*J(μ_{n-1})
+    μ = collect(float.(u0))
+    for n in 1:(length(ts)-1)
+        h  = ts[n+1] - ts[n]
+        push!(allμ_pre, copy(μ))           # pre-Euler state at iteration n
+        A  = Matrix(I + h .* ext.pull_jacobian(gps, μ))
+        push!(allA, A)
+        μ  = μ + h .* ext.field_mean(gps, μ)
+    end
+    # Compute Dₙ for each step n (1..N-1).
+    # At iteration n: current mean = allμ_pre[n] (before Euler), past states = allμ_pre[1..n-1].
+    # product for state i (1-indexed): ∏_{k=i+1}^{n-1} A_k = allA[i+1]*...*allA[n-1]*allA[n]
+    # (product empty = I when i=n-1, i.e. the nearest-past state allμ_pre[n-1]).
+    # Walk backward from i=n-1 down to i=1, accumulating: nearest-past has product I,
+    # stepping to i→i-1 appends allA[i] on the right: prodA ← prodA * allA[i].
+    # Note: allA[n] is the CURRENT A (at state n-1 in 0-indexed), not a past state's A.
+    Dns = Vector{Matrix{Float64}}()
+    for n in 1:(length(ts)-1)
+        h      = ts[n+1] - ts[n]
+        μ_cur  = allμ_pre[n]       # current mean (field evaluated here for D's cross-cov)
+        npast  = n - 1             # number of past states (0..n-2 in 0-indexed)
+        if npast == 0
+            push!(Dns, zeros(d, d))
+            continue
+        end
+        lo_b   = max(1, npast - buffer + 1)
+        Dn     = zeros(d, d)
+        prodA  = Matrix{Float64}(I, d, d)
+        for i in npast:-1:lo_b     # i (1-indexed): allμ_pre[i] = μ_{i-1} (0-indexed past state)
+            covf = Diagonal([only(AbstractGPs.cov(gps[k2], [allμ_pre[i]], [μ_cur])) for k2 in 1:d])
+            Dn  += prodA * covf
+            if i > lo_b
+                # Advance product: step to earlier past state adds A at that state = allA[i]
+                # allA[i] = A_{i-1} in 0-indexed = A at state i-1 = Jacobian at allμ_pre[i]
+                prodA = prodA * allA[i]
+            end
+        end
+        push!(Dns, h .* Dn)
+    end
+    return Dns
+end
+
 @testset "PULL: predmean input-Jacobian matches FD" begin
     k = Magpie._kernel(0.0, 0.0); Z=[[x] for x in range(-2,2;length=6)]
     gp = update(ExactGP(k; noise=1e-6), Z, sinpi.(first.(Z)))
@@ -11,7 +80,29 @@ using Magpie: ExactGP, SparseGP, SVGPField, ExactGPField, update, predmean, PULL
     @test only(J) ≈ fd rtol=1e-5
 end
 
-@testset "PULL: linear oracle + Dₙ=0 canary (the load-bearing assertion)" begin
+@testset "PULL Dn matches brute-force linearized recurrence (non-constant Jacobian)" begin
+    # Discriminating gate: exercises the ∏A product factors with a nonlinear field so
+    # A_n varies along the trajectory. Asserts per-step Dₙ from the telescope matches
+    # a brute-force reference built independently from the definition.
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    gps = _nonlinear_field()          # f(x) ≈ -x + 0.5x² (nonlinear → A_n varies)
+    u0 = [1.5]; ts = collect(range(0, 3; length=31))
+    Dns  = ext._pull_Dn_sequence(gps, u0, ts; buffer=length(ts))
+    Dref = _bruteforce_Dn(gps, u0, ts)
+    @test length(Dns) == length(Dref)
+    max_err = maximum(norm(Dns[n] - Dref[n]) for n in eachindex(Dref))
+    @test max_err < 1e-9
+    # Closed-form n=2 anchor: D_2 = h·cov_f(μ_0, μ_1) (nearest-past only, empty product = I).
+    # This pins both index bugs simultaneously: a self-term (i=n) would add cov_f(μ_n,μ_n)=σ²(μ_n)
+    # instead of cov_f(μ_{n-1},μ_n), and histA[i-1] would inject an extra A factor.
+    h  = ts[2] - ts[1]
+    μ1 = u0 .+ h .* ext.field_mean(gps, u0)
+    D2_expected = h .* Matrix(Diagonal([only(AbstractGPs.cov(gps[1], [u0], [μ1]))]))
+    @test norm(Dns[2] - D2_expected) < 1e-12
+    @info "PULL Dn oracle" max_err D2_err=norm(Dns[2]-D2_expected)
+end
+
+@testset "PULL: linear oracle + Dn=0 canary (the load-bearing assertion)" begin
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
     # linear field f(u)=a·u as a GP; noise≈1e-3 + ~12 anchors so β=var(gp,·) is O(1e-2) (NON-vacuous).
     a = -0.6; Z=[[x] for x in range(-3,3;length=12)]

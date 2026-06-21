@@ -283,20 +283,7 @@ function pull_propagate(gps, u0, ts; buffer::Int=20)
         h = ts[n+1] - ts[n]
         A = I + h .* pull_jacobian(gps, μ)
         V = field_var(gps, μ)                                # marginal variance V_n (buffer-free term)
-        Dn = zeros(d, d)                                     # cross-cov D_n, truncated to `buffer`
-        if buffer > 0
-            lo = max(1, length(histμ) - buffer + 1); prodA = Matrix{Float64}(I, d, d)
-            for i in length(histμ):-1:lo
-                # TRUE field cross-covariance cov_f(μ_i, μ_n), not the marginal variance proxy.
-                # Independent outputs ⇒ diagonal: cov(gps[k], [μ_i], [μ_n]) per output k.
-                covf = Diagonal([only(AbstractGPs.cov(gps[k], [histμ[i]], [μ])) for k in 1:d])
-                Dn += prodA * covf
-                # walk the telescoped product right-to-left: histA[i-1] is the step i-1→i factor A_{i-1},
-                # so prodA accumulates ∏_{k=i-1}^{n-1} A_k for the next (earlier) i (eq 37 propagation product).
-                i > lo && (prodA = prodA * histA[i-1])
-            end
-            Dn .*= h
-        end
+        Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
         # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
         # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
         Σ = Matrix(Symmetric(A*Σ*A' + h^2 .* Matrix(V) + h .* (A*Dn + Dn'*A')))
@@ -305,6 +292,57 @@ function pull_propagate(gps, u0, ts; buffer::Int=20)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
     end
     return μs, Σs
+end
+
+"""
+    _pull_Dn(gps, histμ, histA, μ, h, d; buffer) -> Matrix
+
+Compute the cross-covariance Dₙ = h · Σᵢ (∏_{k=i+1}^{n-1} Aₖ) · cov_f(μᵢ, μₙ),
+summing over PAST states only (i = 0..n-1), not the current state.
+
+Correct recurrence (eq-37): nearest-past term (i=n-1) has empty product (I); each
+earlier term accumulates one more A to the LEFT: prodA ← prodA * histA[i] where
+histA[i] is the Jacobian factor at past state i (A_{i-1→i} in 0-indexed notation).
+Sum starts at npast = length(histμ)-1 (excluding the current state self-term) and
+runs back to lo. The key index fixes vs the original buggy loop:
+  - `npast` (not `length(histμ)`) as the upper bound — excludes the self-term.
+  - `histA[i]` (not `histA[i-1]`) — correct Jacobian at past state i.
+"""
+function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int=20)
+    Dn = zeros(d, d)
+    buffer == 0 && return Dn
+    npast = length(histμ) - 1                      # exclude the current state (self term)
+    npast == 0 && return Dn                        # D_0 = 0 (no past states yet)
+    lo = max(1, npast - buffer + 1)
+    prodA = Matrix{Float64}(I, d, d)
+    for i in npast:-1:lo                            # past states ν_i, nearest first
+        covf = Diagonal([only(AbstractGPs.cov(gps[k], [histμ[i]], [μ])) for k in 1:d])
+        Dn += prodA * covf                          # nearest-past term has product I
+        i > lo && (prodA = prodA * histA[i])        # A_k = histA[i] (Jacobian at state i)
+    end
+    Dn .*= h
+    return Dn
+end
+
+"""
+    _pull_Dn_sequence(gps, u0, ts; buffer=20) -> Vector{Matrix}
+
+Internal: propagate the mean path and return the per-step Dₙ sequence (one matrix per
+time step, length = length(ts)-1). Used by tests to assert the cross-cov telescope
+against a brute-force reference in a non-constant-Jacobian regime.
+"""
+function _pull_Dn_sequence(gps, u0, ts; buffer::Int=20)
+    d = length(u0); μ = collect(float.(u0))
+    histμ = [copy(μ)]; histA = Matrix{Float64}[]; Dns = Matrix{Float64}[]
+    for n in 1:(length(ts)-1)
+        h = ts[n+1] - ts[n]
+        A = I + h .* pull_jacobian(gps, μ)
+        Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
+        push!(Dns, copy(Dn))
+        μ = μ + h .* field_mean(gps, μ)
+        push!(histμ, copy(μ)); push!(histA, A)
+    end
+    return Dns
 end
 
 
