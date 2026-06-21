@@ -1,7 +1,22 @@
 # Capability B core — pure (no SciML import). See ext/MagpieSciMLExt.jl for solve-touching code.
 
+"""
+    GPField
+
+Protocol root for the Capability B GP-UDE fields. Every concrete field implements:
+
+  - `unpack(field, v) -> NamedTuple` — flat trained vector → named params (pure layout).
+  - `regularizer(field, v; kw...) -> Real` — priors (+ KL for SVGP); pure, no solver.
+  - `posterior(field, v) -> Vector{<:AbstractGPModel}` — solver-free reconstruction (ext).
+  - `field_rhs(field, v) -> Function` — the in-loss α/Cholesky + `du += f(u)` closure (ext).
+
+The shooting strategy (`SingleShooting`/`MultipleShooting`) is orthogonal to field type;
+the loss is `field_loss(field, shooting, data) = shooting_data_term(...) + regularizer(...)`.
+"""
+abstract type GPField end
+
 """Trainable GP-UDE field: one shared kernel + fixed anchors `Z`, `d` independent outputs."""
-struct ExactGPField{Tp,TZ}
+struct ExactGPField{Tp,TZ} <: GPField
     prior::Tp        # AbstractGPs.GP (mean + kernel); kernel hypers are overridden per-eval from pf
     Z::TZ            # Vector{Vector{Float64}} of anchors
     n::Int           # number of anchors
@@ -36,15 +51,21 @@ function train! end
 function propagate end
 function posterior_gps end
 function posterior_sparsegps end
+# `posterior` is the new canonical solver-free reconstruction generic (unifies
+# posterior_gps/posterior_sparsegps). Task 1.1 defines the generic + "not loaded" fallback
+# and EXPORTS it; the ext bodies + the alias unification land in Task 1.2 (so the existing
+# ext-defined `posterior_gps`/`posterior_sparsegps` methods are left intact this phase).
+function posterior end
 train!(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 propagate(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 posterior_gps(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 posterior_sparsegps(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
+posterior(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 
 """Multi-output SVGP field: ONE shared set of `M` inducing points `Z` (in state space), per-output
 variational `(μ, L_S)`, `dout` independent outputs. Trained vector (verified shared-Z layout):
 `[logℓ, logσ, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`; jitter is fixed on the field."""
-struct SVGPField{Tp,TZ}
+struct SVGPField{Tp,TZ} <: GPField
     prior::Tp; Z0::TZ; M::Int; dout::Int; D::Int; jitter::Float64; v0::Vector{Float64}
 end
 
@@ -81,6 +102,29 @@ _lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
 nw(L::FieldLayout) = L.n * L.d
 hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2])
 wmat(L::FieldLayout, v) = reshape(v[3:2+nw(L)], L.n, L.d)
+
+# --- GPField protocol: ExactGPField (layout [logℓ, logσ, vec(w)]; lognoise fixed on field) ---
+
+"""
+    unpack(field::ExactGPField, v) -> (logℓ, logσ, w)
+
+Flat trained vector → named params. `w` is an `n×d` matrix of anchor weights.
+"""
+function unpack(field::ExactGPField, v)
+    L = FieldLayout(field.n, field.d)
+    (logℓ=v[1], logσ=v[2], w=wmat(L, v))
+end
+
+"""
+    regularizer(field::ExactGPField, v; λ, logℓ_ref, s, λσ, sσ) -> Real
+
+Hyperparameter priors: a logℓ Gaussian (breaks the ℓ–σ ridge) plus a weak logσ Gaussian.
+Pure — no solver. Evaluated once per loss call.
+"""
+function regularizer(field::ExactGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, λσ=1.0, sσ=1.0, _kw...)
+    p = unpack(field, v)
+    λ*(p.logℓ - logℓ_ref)^2/(2s^2) + λσ*p.logσ^2/(2sσ^2)
+end
 
 """
     solve_alpha(field, logℓ, logσ, lognoise, w) -> Matrix{n×d}
@@ -147,6 +191,31 @@ svgp_μ(f::SVGPField, v) = reshape(v[3+f.D*f.M : 2+f.D*f.M+f.M*f.dout], f.M, f.d
 function svgp_Lsblk(f::SVGPField, v, i)
     o = 2 + f.D*f.M + f.M*f.dout
     v[o+(i-1)*nLS(f.M)+1 : o+i*nLS(f.M)]
+end
+
+# --- GPField protocol: SVGPField (layout [logℓ, logσ, vec(Z), vec(μ), vec(L_S)]; jitter fixed) ---
+
+"""
+    unpack(field::SVGPField, v) -> (logℓ, logσ, Z, μ, Ls)
+
+Flat trained vector → named params. `Z` is `D×M`, `μ` is `M×dout`,
+`Ls` is a `Vector` of `dout` `LowerTriangular` variational Cholesky factors.
+"""
+function unpack(field::SVGPField, v)
+    (logℓ=v[1], logσ=v[2], Z=svgp_Z(field, v), μ=svgp_μ(field, v),
+     Ls=[unpack_LS(svgp_Lsblk(field, v, i), field.M) for i in 1:field.dout])
+end
+
+"""
+    regularizer(field::SVGPField, v; λ, logℓ_ref, s) -> Real
+
+Whitened collapsed KL across all outputs (summed once, not per trajectory) plus the
+logℓ Gaussian prior. Pure — no solver.
+"""
+function regularizer(field::SVGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, _kw...)
+    p = unpack(field, v)
+    kl = sum(svgp_kl(p.μ[:,i], p.Ls[i]) for i in 1:field.dout)
+    kl + λ*(p.logℓ - logℓ_ref)^2/(2s^2)
 end
 
 # ---------------------------------------------------------------------------

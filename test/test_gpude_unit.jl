@@ -1,5 +1,6 @@
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Test
-using Magpie: ExactGPField, FieldLayout, gpfield, solve_alpha, _kernel, wmat, hyp, kmeans_anchors
+using Magpie: GPField, ExactGPField, SVGPField, FieldLayout, gpfield, solve_alpha, _kernel, wmat, hyp, kmeans_anchors
+using Magpie: unpack, regularizer
 using Statistics: var
 
 @testset "gpude unit: field eval + α recompute" begin
@@ -17,6 +18,36 @@ using Statistics: var
     # k-means returns k anchors in the data convention
     X = randn(2, 50); C = kmeans_anchors(X, 6; rng=MersenneTwister(2))
     @test length(C) == 6 && all(length(c) == 2 for c in C)
+end
+
+@testset "GPField protocol: unpack/regularizer (pure, no solver)" begin
+    Random.seed!(7)
+    # --- ExactGPField ---
+    Z = [randn(2) for _ in 1:5]; n, d = 5, 2
+    ef = ExactGPField(SqExponentialKernel(), Z; d=d)
+    @test ef isa GPField
+    pe = unpack(ef, ef.v0)
+    @test pe.logℓ == ef.v0[1]
+    @test pe.logσ == ef.v0[2]
+    @test size(pe.w) == (n, d)
+    @test pe.w == wmat(FieldLayout(n, d), ef.v0)        # thin wrapper over existing layout helper
+    # at the prior centre (logℓ0=logℓ_ref=0, logσ0=0) the regularizer vanishes
+    @test regularizer(ef, ef.v0) ≈ 0 atol=1e-12
+    # off-centre logℓ matches the inline ext prior λ(logℓ-ref)²/2s² + λσ logσ²/2sσ²
+    v = copy(ef.v0); v[1] = 0.4; v[2] = 0.3
+    @test regularizer(ef, v) ≈ 1.0*0.4^2/(2*0.5^2) + 1.0*0.3^2/(2*1.0^2)
+
+    # --- SVGPField ---
+    Z0 = [randn(2) for _ in 1:4]
+    sf = SVGPField(SqExponentialKernel(), Z0; dout=2)
+    @test sf isa GPField
+    ps = unpack(sf, sf.v0)
+    @test ps.logℓ == sf.v0[1] && ps.logσ == sf.v0[2]
+    @test size(ps.Z) == (sf.D, sf.M)
+    @test size(ps.μ) == (sf.M, sf.dout)
+    @test length(ps.Ls) == sf.dout
+    # at v0: μ=0, L_S=I ⇒ KL=0 and logℓ=logℓ_ref ⇒ regularizer ≈ 0
+    @test regularizer(sf, sf.v0) ≈ 0 atol=1e-10
 end
 
 @testset "decoupled sampler: variance ratio ≈ 1 in-distribution; OOD starvation logged" begin
