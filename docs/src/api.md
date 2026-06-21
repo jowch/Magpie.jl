@@ -16,6 +16,7 @@ LaplaceGP
 update
 predict
 predmean
+grad_predict
 nlml
 fit
 ```
@@ -28,6 +29,9 @@ MarginalAcquisition
 Straddle
 RandStraddle
 BinaryBALD
+GradStraddle
+RandGradStraddle
+LocalPenalization
 resample
 ```
 
