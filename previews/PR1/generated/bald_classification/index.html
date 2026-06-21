@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Decision boundary (BinaryBALD) · Magpie.jl</title><meta name="title" content="Decision boundary (BinaryBALD) · Magpie.jl"/><meta property="og:title" content="Decision boundary (BinaryBALD) · Magpie.jl"/><meta property="twitter:title" content="Decision boundary (BinaryBALD) · Magpie.jl"/><meta name="description" content="Documentation for Magpie.jl."/><meta property="og:description" content="Documentation for Magpie.jl."/><meta property="twitter:description" content="Documentation for Magpie.jl."/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img class="docs-light-only" src="../../assets/logo.svg" alt="Magpie.jl logo"/><img class="docs-dark-only" src="../../assets/logo-dark.svg" alt="Magpie.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Magpie.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../levelset_straddle/">Level-set recovery (Straddle)</a></li><li class="is-active"><a class="tocitem" href>Decision boundary (BinaryBALD)</a><ul class="internal"><li><a class="tocitem" href="#Setup"><span>Setup</span></a></li><li><a class="tocitem" href="#The-task:-a-checkerboard-decision-boundary"><span>The task: a checkerboard decision boundary</span></a></li><li><a class="tocitem" href="#Learning-curves:-methodology"><span>Learning curves: methodology</span></a></li><li><a class="tocitem" href="#Figure-1-—-the-headline-learning-curve"><span>Figure 1 — the headline learning curve</span></a></li><li><a class="tocitem" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)"><span>Figure 2 — snapshot at budget 40 (seed 1)</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Decision boundary (BinaryBALD)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Decision boundary (BinaryBALD)</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/jowch/Magpie.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/jowch/Magpie.jl/blob/main/examples/bald_classification.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Data-efficiency-with-BinaryBALD:-learning-curves-on-a-checkerboard"><a class="docs-heading-anchor" href="#Data-efficiency-with-BinaryBALD:-learning-curves-on-a-checkerboard">Data efficiency with BinaryBALD: learning curves on a checkerboard</a><a id="Data-efficiency-with-BinaryBALD:-learning-curves-on-a-checkerboard-1"></a><a class="docs-heading-anchor-permalink" href="#Data-efficiency-with-BinaryBALD:-learning-curves-on-a-checkerboard" title="Permalink"></a></h1><p>Active learning earns its keep only when each observation is <strong>expensive</strong>. A drug-discovery ADMET panel runs roughly <span>$</span>3k–<span>$</span>8k per compound; synchrotron beam time costs several hundred dollars per hour; expert image labeling can consume person-years.  When labels are cheap and abundant, a larger passively-collected dataset simply wins — standard ML is the right tool.  But when each query has a real cost, the question is no longer <em>how accurate can we get?</em> but <strong>how many queries does it take to reach a target accuracy?</strong></p><p>This vignette makes that question concrete.  We compare two arms on a checkerboard classification task:</p><ul><li><strong>BinaryBALD</strong> — selects each query to maximally reduce uncertainty about the decision boundary (mutual information between label and model parameters; Houlsby et al. 2011).</li><li><strong>Uniform random</strong> — draws the next query uniformly at random with no acquisition signal.</li></ul><p>The headline is a <em>learning curve</em> — test accuracy vs number of queries, averaged over 10 paired seeds with ±1 SD bands.</p><h2 id="Setup"><a class="docs-heading-anchor" href="#Setup">Setup</a><a id="Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Setup" title="Permalink"></a></h2><pre><code class="language-julia hljs">ENV[&quot;GKSwstype&quot;] = &quot;100&quot;  ## GR headless rendering (no display required)
+
+using Magpie, KernelFunctions, LinearAlgebra, Random
+using Statistics: mean, std
+using Plots; gr()</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Plots.GRBackend()</code></pre><h2 id="The-task:-a-checkerboard-decision-boundary"><a class="docs-heading-anchor" href="#The-task:-a-checkerboard-decision-boundary">The task: a checkerboard decision boundary</a><a id="The-task:-a-checkerboard-decision-boundary-1"></a><a class="docs-heading-anchor-permalink" href="#The-task:-a-checkerboard-decision-boundary" title="Permalink"></a></h2><p>We classify points in <code>[−2, 2]²</code> by the sign of <code>sin(2x₁)·sin(2x₂)</code>. This produces an interleaved checkerboard pattern with four sign-alternating cells in each quadrant — genuinely harder than a convex boundary because the learner must resolve multiple disconnected regions simultaneously.  That multi-region structure is exactly what rewards informative sampling most.</p><pre><code class="language-julia hljs">label(x) = sin(2x[1]) * sin(2x[2]) &gt; 0
+
+box = Box([-2.0, -2.0], [2.0, 2.0])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Box{Vector{Float64}}([-2.0, -2.0], [2.0, 2.0])</code></pre><h2 id="Learning-curves:-methodology"><a class="docs-heading-anchor" href="#Learning-curves:-methodology">Learning curves: methodology</a><a id="Learning-curves:-methodology-1"></a><a class="docs-heading-anchor-permalink" href="#Learning-curves:-methodology" title="Permalink"></a></h2><p>A held-out test set of 400 random points is fixed once (seed 0) and reused across every run.  <em>Test accuracy</em> is the idiomatic AL metric: it measures generalisation to unseen points rather than memorisation of training data.</p><p>For each of 10 seeds we run <strong>both</strong> arms from the <strong>same cold start</strong> (10 random points drawn with that seed), then step each arm one query at a time up to budget 40.  Sharing the cold start ensures a fair paired comparison. Averaging over 10 seeds gives stable mean curves and honest ±1 SD bands — the reproducibility literature shows single-run AL claims are often noise.</p><pre><code class="language-julia hljs"># Fixed held-out test set, seeded once
+Random.seed!(0)
+Xtest = [4 .* rand(2) .- 2 for _ in 1:400]
+ytest = label.(Xtest)
+acc(g) = sum((predmean(g, p) &gt; 0) == yt for (p, yt) in zip(Xtest, ytest)) / length(Xtest)
+
+function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4)
+    Random.seed!(seed)
+    cold = [4 .* rand(2) .- 2 for _ in 1:10]    # paired: same seed ⇒ identical cold start for both arms
+    al = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), ℓ)), BinaryBALD())
+    for x in cold
+        observe!(al, x, label(x))
+    end
+    accs = Float64[]
+    for _ in 1:B
+        x = bald ? acquire(al; over = box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
+        observe!(al, x, label(x))
+        push!(accs, acc(posterior_gp(al)))
+    end
+    return accs
+end
+
+SEEDS = 1:10
+bald_curves = [learning_curve(s; bald = true)  for s in SEEDS]
+rand_curves = [learning_curve(s; bald = false) for s in SEEDS]
+mb = [mean(c[k] for c in bald_curves) for k in 1:40]   # mean BALD curve
+mr = [mean(c[k] for c in rand_curves) for k in 1:40]   # mean random curve
+sb = [std(c[k]  for c in bald_curves) for k in 1:40]   # ±1 SD for ribbons
+sr = [std(c[k]  for c in rand_curves) for k in 1:40]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">40-element Vector{Float64}:
+ 0.03680277767294805
+ 0.04280852069909032
+ 0.04115097541708796
+ 0.03951177742845234
+ 0.05207099853938745
+ 0.050566924851021836
+ 0.0434485647378343
+ 0.043237875628768914
+ 0.04558950293409411
+ 0.043051164650654665
+ ⋮
+ 0.033249895572100036
+ 0.03527766841627844
+ 0.03515935943039288
+ 0.03668181505263274
+ 0.03592526965799979
+ 0.03296568080763862
+ 0.034521531123504805
+ 0.03109573032498906
+ 0.030895208186527703</code></pre><h2 id="Figure-1-—-the-headline-learning-curve"><a class="docs-heading-anchor" href="#Figure-1-—-the-headline-learning-curve">Figure 1 — the headline learning curve</a><a id="Figure-1-—-the-headline-learning-curve-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-1-—-the-headline-learning-curve" title="Permalink"></a></h2><p>BinaryBALD reaches 80% test accuracy around query 30 on average; uniform random does not cross that threshold within the 40-query budget.  The ±1 SD bands show the variation across seeds: the gap is consistent, not a lucky draw.</p><p><strong>Why?</strong>  Uniform random spreads its budget across the whole domain, wasting queries in regions far from any decision boundary.  BinaryBALD&#39;s mutual-information criterion spends each query where it most reduces uncertainty about the boundary, compressing the path to the target accuracy.</p><p><strong>Caveats (important).</strong>  AL assumes a reasonably calibrated model.  At very low budgets the posterior is noisy and BALD can match or trail random; and if observations are genuinely cheap and plentiful, passive sampling wins.  A natural additional baseline — not shown here — is max-entropy / uncertainty sampling (query wherever <code>σ(x)</code> is largest); that is a small acquisition to add and would provide a tighter comparison than uniform random alone.</p><pre><code class="language-julia hljs">plt1 = plot(
+    mb;
+    ribbon = sb,
+    label = &quot;BinaryBALD&quot;,
+    xlabel = &quot;queries (after cold start)&quot;,
+    ylabel = &quot;test accuracy&quot;,
+    title = &quot;Data efficiency: BinaryBALD vs random&quot;,
+    legend = :bottomright,
+    ylims = (0.5, 1.0),
+    linewidth = 2,
+)
+plot!(
+    plt1, mr;
+    ribbon = sr,
+    label = &quot;uniform random&quot;,
+    linewidth = 2,
+)
+hline!(
+    plt1, [0.8];
+    ls = :dash,
+    lc = :black,
+    lw = 1,
+    label = &quot;80% target&quot;,
+)</code></pre><img src="edd70034.svg" alt="Example block output"/><h2 id="Figure-2-—-snapshot-at-budget-40-(seed-1)"><a class="docs-heading-anchor" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)">Figure 2 — snapshot at budget 40 (seed 1)</a><a id="Figure-2-—-snapshot-at-budget-40-(seed-1)-1"></a><a class="docs-heading-anchor-permalink" href="#Figure-2-—-snapshot-at-budget-40-(seed-1)" title="Permalink"></a></h2><p>The latent GP mean <code>predmean(g, p)</code> is the pre-sigmoid score: positive in <code>label = true</code> cells, negative in <code>label = false</code> cells.  With the <code>:RdBu</code> map, blue marks the positive class and red the negative; the true checkerboard boundaries are overlaid in black.  The latent mean has recovered the alternating four-cell structure.  White dots are the 40 BALD queries (after the 10-point cold start): rather than hugging any single contour, BinaryBALD spreads them to reduce uncertainty across the disconnected regions — an information-driven coverage that lets it resolve the whole pattern within budget.</p><pre><code class="language-julia hljs"># Reproduce seed-1 BALD run for the snapshot
+Random.seed!(1)
+cold1 = [4 .* rand(2) .- 2 for _ in 1:10]
+al1 = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.4)), BinaryBALD())
+for x in cold1
+    observe!(al1, x, label(x))
+end
+for _ in 1:40
+    x = acquire(al1; over = box)
+    observe!(al1, x, label(x))
+end
+g1 = posterior_gp(al1)
+
+xs = range(-2, 2; length = 50)
+ys = range(-2, 2; length = 50)
+
+Z_mean = [predmean(g1, [xi, yj]) for yj in ys, xi in xs]
+
+# True checkerboard boundaries: contour of sin(2x₁)·sin(2x₂) at level 0
+Z_check = [sin(2xi) * sin(2yj) for yj in ys, xi in xs]
+
+pts1 = queried_points(al1)
+px1 = [p[1] for p in pts1]
+py1 = [p[2] for p in pts1]
+
+plt2 = heatmap(
+    xs, ys, Z_mean;
+    title = &quot;Latent posterior mean, seed 1 (40 BALD queries)&quot;,
+    xlabel = &quot;x₁&quot;, ylabel = &quot;x₂&quot;,
+    c = :RdBu,
+    aspect_ratio = :equal, xlims = (-2, 2), ylims = (-2, 2),
+)
+contour!(plt2, xs, ys, Z_check; levels = [0.0], lw = 2, lc = :black, label = &quot;true boundary&quot;)
+scatter!(
+    plt2, px1, py1;
+    ms = 4,
+    mc = :white,
+    msw = 1,
+    label = &quot;BALD queries&quot;,
+)</code></pre><img src="c50acec0.svg" alt="Example block output"/><p>The example&#39;s correctness checks run when this file is executed directly (e.g. in CI); they are stripped from this rendered page.</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../levelset_straddle/">« Level-set recovery (Straddle)</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 21 June 2026 08:17">Sunday 21 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
