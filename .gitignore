@@ -32,3 +32,6 @@ JuliaLocalPreferences.toml
 
 # superpowers working artifacts (local-only: design specs + implementation plans)
 /.superpowers/
+
+# internal research notes (kept local, not part of the public surface)
+/docs/research/

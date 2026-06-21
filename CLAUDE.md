@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Deferred** (not built): SparseGP/inducing, the decoupled (Matheron) sampler, multi-class BALD, and all of **Capability B (GP-in-SciML bridge)** — the next plan.
 
-The design rationale lives in `docs/research/` (start at `docs/research/README.md`) — research notes recording not just what to build but *why* each numerical and autodiff choice was made; `docs/research/critique.md` is the opinionated counterweight (effort ranked by payoff). Read them before non-trivial changes.
+The design rationale lives in `docs/research/` (start at `docs/research/README.md`) — research notes recording not just what to build but *why* each numerical and autodiff choice was made; `docs/research/critique.md` is the opinionated counterweight (effort ranked by payoff). Read them before non-trivial changes. **Note:** `docs/research/` is kept local and is gitignored — it is not part of the public repository, so the `docs/research/...` references throughout this file resolve only in a local working tree.
 
 ## Commands
 

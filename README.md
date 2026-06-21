@@ -114,8 +114,7 @@ For GP-as-ODE-field work, [GPDiffEq.jl](https://github.com/Crown421/GPDiffEq.jl)
 
 The numerical and autodiff choices — Mooncake-first, dense factorizations through a single
 `_chol` chokepoint, a from-scratch Mooncake-clean Laplace, calibrated bits-BALD — are
-recorded with their rationale in [`docs/research/`](docs/research/README.md) and summarized
-for contributors in [`CLAUDE.md`](CLAUDE.md).
+summarized for contributors in [`CLAUDE.md`](CLAUDE.md).
 
 ## Roadmap
 
