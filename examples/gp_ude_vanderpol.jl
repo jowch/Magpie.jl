@@ -48,34 +48,34 @@ using Plots; gr()
 function vdp!(du, u, p, t)
     μ = 1.5
     du[1] = u[2]
-    du[2] = μ*(1 - u[1]^2)*u[2] - u[1]
-    nothing
+    du[2] = μ * (1 - u[1]^2) * u[2] - u[1]
+    return nothing
 end
 
-vdp_true(u) = [u[2], 1.5*(1 - u[1]^2)*u[2] - u[1]]
+vdp_true(u) = [u[2], 1.5 * (1 - u[1]^2) * u[2] - u[1]]
 
-u0    = [2.0, 0.0]
+u0 = [2.0, 0.0]
 tspan = (0.0, 3.0)
-ts    = collect(range(tspan...; length=20))
+ts = collect(range(tspan...; length = 20))
 
 # Clean training trajectory.
-target = Array(solve(ODEProblem(vdp!, u0, tspan), Tsit5(); saveat=ts))
+target = Array(solve(ODEProblem(vdp!, u0, tspan), Tsit5(); saveat = ts))
 
 # ## Add observation noise (σ_obs_true ≈ 0.03)
 
 σ_obs_true = 0.03f0
-rng_noise  = MersenneTwister(123)
-Xnoisy     = target .+ σ_obs_true .* randn(rng_noise, size(target))
+rng_noise = MersenneTwister(123)
+Xnoisy = target .+ σ_obs_true .* randn(rng_noise, size(target))
 
 # ## Build and train the GP-UDE field on NOISY data
 
 Random.seed!(42)
-Z     = kmeans_anchors(Xnoisy, 12; rng=MersenneTwister(7))
-field = ExactGPField(SqExponentialKernel(), Z; d=2)
+Z = kmeans_anchors(Xnoisy, 12; rng = MersenneTwister(7))
+field = ExactGPField(SqExponentialKernel(), Z; d = 2)
 
 # `λ=1/(20*2)` is a weak log-ℓ prior centred at 0 with std 0.5.
 # We train on `Xnoisy` — the field must learn through noise, not a clean signal.
-field, vopt = train!(field, (ts, Xnoisy); tspan, maxiters=150, λ=1/(20*2), s=0.5)
+field, vopt = train!(field, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (20 * 2), s = 0.5)
 
 # ## Posterior GPs
 
@@ -89,17 +89,17 @@ gps = posterior_gps(field, vopt)
 # then compare against the clean truth.
 
 gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
-sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat=ts))
+sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
 
-traj_pred  = [sol_gp[:, i] for i in 1:length(ts)]
+traj_pred = [sol_gp[:, i] for i in 1:length(ts)]
 traj_truth = [target[:, i] for i in 1:length(ts)]
 
 # Off-manifold test grid: 10×10 around the limit cycle.
-u1_grid = range(-2.5, 2.5; length=10)
-u2_grid = range(-3.0, 3.0; length=10)
-offpts  = vec([[p1, p2] for p1 in u1_grid, p2 in u2_grid])
+u1_grid = range(-2.5, 2.5; length = 10)
+u2_grid = range(-3.0, 3.0; length = 10)
+offpts = vec([[p1, p2] for p1 in u1_grid, p2 in u2_grid])
 
-metrics = recovery_metrics(gps, vdp_true, traj_pred, traj_truth; offpts=offpts)
+metrics = recovery_metrics(gps, vdp_true, traj_pred, traj_truth; offpts = offpts)
 
 @info "Trajectory RMSE (ODE integration of GP mean vs clean truth)" metrics.traj_rmse
 @info "Field error (on-trajectory)"  metrics.field_err_visited.median  metrics.field_err_visited.q90
@@ -107,12 +107,12 @@ metrics = recovery_metrics(gps, vdp_true, traj_pred, traj_truth; offpts=offpts)
 
 # ## 2. Plot: mean trajectory vs clean data
 
-p1 = plot(ts, target[1,:], label="x (clean)", lw=2, c=:blue)
-plot!(p1, ts, target[2,:], label="ẋ (clean)", lw=2, c=:red)
-plot!(p1, ts, Xnoisy[1,:], label="x (noisy data)", lw=1, c=:blue, ls=:dot, alpha=0.6)
-plot!(p1, ts, Xnoisy[2,:], label="ẋ (noisy data)", lw=1, c=:red,  ls=:dot, alpha=0.6)
-plot!(p1, ts, sol_gp[1,:], label="x (GP ODE mean)", lw=2, c=:blue, ls=:dash)
-plot!(p1, ts, sol_gp[2,:], label="ẋ (GP ODE mean)", lw=2, c=:red,  ls=:dash)
+p1 = plot(ts, target[1, :], label = "x (clean)", lw = 2, c = :blue)
+plot!(p1, ts, target[2, :], label = "ẋ (clean)", lw = 2, c = :red)
+plot!(p1, ts, Xnoisy[1, :], label = "x (noisy data)", lw = 1, c = :blue, ls = :dot, alpha = 0.6)
+plot!(p1, ts, Xnoisy[2, :], label = "ẋ (noisy data)", lw = 1, c = :red, ls = :dot, alpha = 0.6)
+plot!(p1, ts, sol_gp[1, :], label = "x (GP ODE mean)", lw = 2, c = :blue, ls = :dash)
+plot!(p1, ts, sol_gp[2, :], label = "ẋ (GP ODE mean)", lw = 2, c = :red, ls = :dash)
 xlabel!(p1, "t"); ylabel!(p1, "state")
 title!(p1, "VdP GP-UDE: mean trajectory (trained on noisy data)")
 savefig(p1, "vdp_trajectory.png")
@@ -130,20 +130,20 @@ savefig(p1, "vdp_trajectory.png")
 # substantially. Coverage is reported as an informational diagnostic, not a hard gate;
 # the hard gates are metrics 1 (trajectory RMSE) and 2 (field error).
 
-u0_test   = [2.0, 0.5]   # NOT the training IC
-ts_test   = collect(range(tspan...; length=20))
+u0_test = [2.0, 0.5]   # NOT the training IC
+ts_test = collect(range(tspan...; length = 20))
 
 # Clean ground-truth trajectory from the held-out IC.
-target_test = Array(solve(ODEProblem(vdp!, u0_test, tspan), Tsit5(); saveat=ts_test))
-truth_vecs  = [target_test[:, i] for i in 1:length(ts_test)]
+target_test = Array(solve(ODEProblem(vdp!, u0_test, tspan), Tsit5(); saveat = ts_test))
+truth_vecs = [target_test[:, i] for i in 1:length(ts_test)]
 
 # ### 3a. PULL — cheap analytic propagation (Euler-limited on nonlinear horizons)
 #
 # PULL's mean is a first-order Euler recurrence; on a nonlinear oscillator it drifts
 # from the true trajectory, so coverage collapses to ~0. Kept as a documented
 # contrast, NOT as the validated-uncertainty story.
-μs_test, Σs_test = propagate(gps, u0_test, tspan; method=PULL(), ts=ts_test)
-cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level=0.9)
+μs_test, Σs_test = propagate(gps, u0_test, tspan; method = PULL(), ts = ts_test)
+cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level = 0.9)
 
 @info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
 
@@ -152,17 +152,17 @@ cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level=0.9)
 # Each of `n` samples is a decoupled GP draw integrated as a proper ODE, so the
 # ensemble carries the field's uncertainty *without* PULL's Euler drift.
 # `propagate(...; method=Pathwise(n=N))` returns an `N × d × |ts|` array.
-ens = propagate(gps, u0_test, tspan; method=Pathwise(n=128), ts=ts_test)
+ens = propagate(gps, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
 
 # Per-step empirical mean + covariance from the ensemble, then reuse the same
 # Mahalanobis-χ² `coverage` as PULL (apples-to-apples at 90% nominal).
 # Skip the first step (all samples start at the same u0_test; zero variance).
-nsteps     = length(ts_test)
-μs_path    = [vec(mean(ens[:, :, k]; dims=1)) for k in 1:nsteps]
-Σs_path    = [cov(ens[:, :, k]) for k in 1:nsteps]
+nsteps = length(ts_test)
+μs_path = [vec(mean(ens[:, :, k]; dims = 1)) for k in 1:nsteps]
+Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]
 
 # Coverage over steps 2:end only (step 1 is deterministic: all samples = u0_test).
-cov90_path = coverage(truth_vecs[2:end], μs_path[2:end], Σs_path[2:end]; level=0.9)
+cov90_path = coverage(truth_vecs[2:end], μs_path[2:end], Σs_path[2:end]; level = 0.9)
 
 @info "Held-out-IC Pathwise coverage at 90% nominal (informational)" cov90_path
 
@@ -177,13 +177,13 @@ u2_lo = [quantile(ens[:, 2, k], 0.05) for k in 1:nsteps]
 u2_hi = [quantile(ens[:, 2, k], 0.95) for k in 1:nsteps]
 μmat_path = reduce(hcat, μs_path)   # 2 × |ts_test|
 
-p2 = plot(ts_test, target_test[1,:], label="x (clean, held-out IC)", lw=2, c=:blue)
-plot!(p2, ts_test, target_test[2,:], label="ẋ (clean, held-out IC)", lw=2, c=:red)
-plot!(p2, ts_test, μmat_path[1,:], label="x μ (Pathwise)", lw=2, c=:blue, ls=:dash)
-plot!(p2, ts_test, μmat_path[2,:], label="ẋ μ (Pathwise)", lw=2, c=:red,  ls=:dash)
+p2 = plot(ts_test, target_test[1, :], label = "x (clean, held-out IC)", lw = 2, c = :blue)
+plot!(p2, ts_test, target_test[2, :], label = "ẋ (clean, held-out IC)", lw = 2, c = :red)
+plot!(p2, ts_test, μmat_path[1, :], label = "x μ (Pathwise)", lw = 2, c = :blue, ls = :dash)
+plot!(p2, ts_test, μmat_path[2, :], label = "ẋ μ (Pathwise)", lw = 2, c = :red, ls = :dash)
 # 5–95% Pathwise envelopes.
-plot!(p2, ts_test, u1_hi, fillrange=u1_lo, alpha=0.15, c=:blue, label="x 5–95%", lw=0)
-plot!(p2, ts_test, u2_hi, fillrange=u2_lo, alpha=0.15, c=:red,  label="ẋ 5–95%", lw=0)
+plot!(p2, ts_test, u1_hi, fillrange = u1_lo, alpha = 0.15, c = :blue, label = "x 5–95%", lw = 0)
+plot!(p2, ts_test, u2_hi, fillrange = u2_lo, alpha = 0.15, c = :red, label = "ẋ 5–95%", lw = 0)
 xlabel!(p2, "t"); ylabel!(p2, "state")
 title!(p2, "VdP GP-UDE: held-out-IC Pathwise ensemble band (90%)")
 savefig(p2, "vdp_trajectory_coverage.png")
@@ -203,6 +203,6 @@ using Test  #src
 @test metrics.traj_rmse < 0.12   #src  ODE integration of GP mean vs clean truth (measured ≈ 0.10)
 @test metrics.field_err_visited.median < 0.5   #src  on-trajectory GP field error (measured ≈ 0.32)
 # PULL coverage: Euler drift on a nonlinear oscillator → ~0. Documented PULL limitation.  #src
-@info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits=3)) (Euler-limited; documented contrast)."  #src
+@info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits = 3)) (Euler-limited; documented contrast)."  #src
 # Pathwise coverage: single-shooting amplifies field uncertainty → informational.           #src
-@info "Held-out-IC Pathwise coverage at 90% nominal: $(round(cov90_path; digits=3)) (informational; see §3 notes)."     #src
+@info "Held-out-IC Pathwise coverage at 90% nominal: $(round(cov90_path; digits = 3)) (informational; see §3 notes)."     #src

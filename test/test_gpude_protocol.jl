@@ -18,21 +18,23 @@ const _a, _b, _τ, _I = 0.7, 0.8, 12.5, 0.5
 
 function fhn_full!(du, u, p, t)
     v, w = u[1], u[2]
-    du[1] = v - v^3/3 - w + _I
-    du[2] = (v + _a - _b*w) / _τ
-    nothing
+    du[1] = v - v^3 / 3 - w + _I
+    du[2] = (v + _a - _b * w) / _τ
+    return nothing
 end
 
-fhn_known(u, t) = [u[1] - u[2] + _I, (u[1] + _a - _b*u[2]) / _τ]
-fhn_residual_true(u) = [-u[1]^3/3, 0.0]
+fhn_known(u, t) = [u[1] - u[2] + _I, (u[1] + _a - _b * u[2]) / _τ]
+fhn_residual_true(u) = [-u[1]^3 / 3, 0.0]
 
 # ---------------------------------------------------------------------------
 # Helper: inline field_error at a set of state points.
 # field_error = median over pts of ‖posterior_mean(gps, z) − true_residual(z)‖
 # ---------------------------------------------------------------------------
 function _field_err(gps, true_residual, pts)
-    errs = [norm([predmean(gps[i], z) for i in eachindex(gps)] .- true_residual(z))
-            for z in pts]
+    errs = [
+        norm([predmean(gps[i], z) for i in eachindex(gps)] .- true_residual(z))
+            for z in pts
+    ]
     return Statistics.median(errs)
 end
 
@@ -43,11 +45,11 @@ end
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
 
     u0 = [-1.0, 1.0]; tspan = (0.0, 5.0)
-    ts = collect(range(tspan...; length=12))
-    target = Array(solve(ODEProblem(fhn_full!, u0, tspan), Tsit5(); saveat=ts))
+    ts = collect(range(tspan...; length = 12))
+    target = Array(solve(ODEProblem(fhn_full!, u0, tspan), Tsit5(); saveat = ts))
 
     Z = [target[:, i] for i in 1:size(target, 2)]  # anchors on trajectory
-    inner = ExactGPField(SqExponentialKernel(), Z; d=2, logℓ0=log(0.5))
+    inner = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = log(0.5))
     cf = CompositeField(fhn_known, inner)
 
     # Build loss via field_loss(CompositeField, SingleShooting, data)
@@ -61,15 +63,15 @@ end
     v_test = copy(cf.v0)
     v_test[3:end] .= 0.01 .* randn(rng, length(v_test) - 2)
 
-    g_mc = DI.gradient(loss, DI.AutoMooncake(; config=nothing), v_test)
+    g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v_test)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v_test)[1]
 
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
-    wnorm  = norm(g_fd[3:end])   # w-block starts at index 3 (same layout as ExactGPField)
+    wnorm = norm(g_fd[3:end])   # w-block starts at index 3 (same layout as ExactGPField)
 
     @info "CompositeField R3 gradient gate" relerr wnorm
-    @test relerr < 5e-3
-    @test wnorm > 1e-3
+    @test relerr < 5.0e-3
+    @test wnorm > 1.0e-3
 end
 
 @testset "CompositeField protocol: posterior returns residual GP" begin
@@ -77,11 +79,11 @@ end
     Random.seed!(7)
 
     u0 = [-1.0, 1.0]; tspan = (0.0, 5.0)
-    ts = collect(range(tspan...; length=10))
-    target = Array(solve(ODEProblem(fhn_full!, u0, tspan), Tsit5(); saveat=ts))
+    ts = collect(range(tspan...; length = 10))
+    target = Array(solve(ODEProblem(fhn_full!, u0, tspan), Tsit5(); saveat = ts))
 
     Z = [target[:, i] for i in 1:size(target, 2)]
-    inner = ExactGPField(SqExponentialKernel(), Z; d=2)
+    inner = ExactGPField(SqExponentialKernel(), Z; d = 2)
     cf = CompositeField(fhn_known, inner)
 
     # posterior(cf, v) must return a vector of ExactGPs of length d=2
@@ -98,8 +100,8 @@ end
     @info "CompositeField posterior (prior, w=0)" m1 m2
 
     # At v0 (w=0), residual GP mean ≈ 0 everywhere (zero weights ⇒ zero posterior mean at prior)
-    @test abs(m1) < 1e-10
-    @test abs(m2) < 1e-10
+    @test abs(m1) < 1.0e-10
+    @test abs(m2) < 1.0e-10
 end
 
 @testset "CompositeField protocol: train! + trajectory RMSE + residual field_error" begin
@@ -113,25 +115,25 @@ end
 
     function local_fhn!(du, u, p, t)
         v, w = u[1], u[2]
-        du[1] = v - v^3/3 - w + _pI
-        du[2] = (v + _pa - _pb*w) / _pτ
+        du[1] = v - v^3 / 3 - w + _pI
+        du[2] = (v + _pa - _pb * w) / _pτ
         nothing
     end
 
-    local_known(u, t) = [u[1] - u[2] + _pI, (u[1] + _pa - _pb*u[2]) / _pτ]
-    local_residual(u) = [-u[1]^3/3, 0.0]
+    local_known(u, t) = [u[1] - u[2] + _pI, (u[1] + _pa - _pb * u[2]) / _pτ]
+    local_residual(u) = [-u[1]^3 / 3, 0.0]
 
     u0 = [-1.0, 1.0]; tspan = (0.0, 8.0)
-    ts = collect(range(tspan...; length=20))
-    target = Array(solve(ODEProblem(local_fhn!, u0, tspan), Tsit5(); saveat=ts))
+    ts = collect(range(tspan...; length = 20))
+    target = Array(solve(ODEProblem(local_fhn!, u0, tspan), Tsit5(); saveat = ts))
 
     # Anchors on the trajectory (good coverage of visited states)
     Z = [target[:, i] for i in 1:size(target, 2)]
-    inner = ExactGPField(SqExponentialKernel(), Z; d=2, logℓ0=log(0.5), lognoise=log(1e-2))
+    inner = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = log(0.5), lognoise = log(1.0e-2))
     cf = CompositeField(local_known, inner)
 
     loss0 = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])(cf.v0)
-    cf, vopt = Magpie.train!(cf, (ts, target); tspan, adam_iters=300, maxiters=100, λ=1/(20*2))
+    cf, vopt = Magpie.train!(cf, (ts, target); tspan, adam_iters = 300, maxiters = 100, λ = 1 / (20 * 2))
     lossT = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])(vopt)
 
     @info "CompositeField train!" loss0 lossT
@@ -142,8 +144,10 @@ end
     # i.e. sqrt((data_mse + reg)/(N*d)), not true trajectory RMSE.
     # Fix: integrate at vopt and compute sqrt(mean(abs2, Array(sol) .- target)).
     pf_opt, rhs_opt! = ext.field_rhs(cf, vopt)
-    sol_opt = solve(ODEProblem((du, u, p, t) -> rhs_opt!(du, u, p, t), u0, tspan, pf_opt),
-                    Tsit5(); saveat=ts)
+    sol_opt = solve(
+        ODEProblem((du, u, p, t) -> rhs_opt!(du, u, p, t), u0, tspan, pf_opt),
+        Tsit5(); saveat = ts
+    )
     sol_arr = Array(sol_opt)
     sol_rmse = size(sol_arr) == size(target) ? sqrt(mean(abs2, sol_arr .- target)) : Inf
     @info "CompositeField sol_rmse (true trajectory RMSE)" sol_rmse

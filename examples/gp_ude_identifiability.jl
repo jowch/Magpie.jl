@@ -24,26 +24,26 @@ using Plots; gr()
 
 function lv!(du, u, p, t)
     α, β, γ, δ = 1.5, 1.0, 3.0, 1.0
-    du[1] = α*u[1] - β*u[1]*u[2]
-    du[2] = δ*u[1]*u[2] - γ*u[2]
-    nothing
+    du[1] = α * u[1] - β * u[1] * u[2]
+    du[2] = δ * u[1] * u[2] - γ * u[2]
+    return nothing
 end
 
-lv_true(u) = [1.5*u[1] - u[1]*u[2], u[1]*u[2] - 3.0*u[2]]
+lv_true(u) = [1.5 * u[1] - u[1] * u[2], u[1] * u[2] - 3.0 * u[2]]
 
-u0    = [1.0, 1.0]
+u0 = [1.0, 1.0]
 tspan = (0.0, 3.0)
-ts    = collect(range(tspan...; length=15))
+ts = collect(range(tspan...; length = 15))
 
-target = Array(solve(ODEProblem(lv!, u0, tspan), Tsit5(); saveat=ts))
+target = Array(solve(ODEProblem(lv!, u0, tspan), Tsit5(); saveat = ts))
 
 σ_obs_true = 0.03f0
-rng_noise  = MersenneTwister(123)
-Xnoisy     = target .+ σ_obs_true .* randn(rng_noise, size(target))
+rng_noise = MersenneTwister(123)
+Xnoisy = target .+ σ_obs_true .* randn(rng_noise, size(target))
 
 # Shared anchor grid (same Z for all seeds so w-blocks correspond to same locations).
 Random.seed!(42)
-Z = kmeans_anchors(Xnoisy, 12; rng=MersenneTwister(7))
+Z = kmeans_anchors(Xnoisy, 12; rng = MersenneTwister(7))
 
 # Extension (get once — field_loss lives in MagpieSciMLExt).
 ext = Base.get_extension(Magpie, :MagpieSciMLExt)
@@ -57,42 +57,46 @@ ext = Base.get_extension(Magpie, :MagpieSciMLExt)
 # Result: a flat valley in logσ at every logℓ, and a sharp well in logℓ.
 
 Random.seed!(1)
-field_ref = ExactGPField(SqExponentialKernel(), Z; d=2, logℓ0=0.0)
-field_ref, vopt = train!(field_ref, (ts, Xnoisy); tspan, maxiters=150, λ=1e-4, s=0.5)
+field_ref = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = 0.0)
+field_ref, vopt = train!(field_ref, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
 
-@info "Reference optimum" logℓ=round(vopt[1];digits=3) logσ=round(vopt[2];digits=3)
+@info "Reference optimum" logℓ = round(vopt[1]; digits = 3) logσ = round(vopt[2]; digits = 3)
 
 # Pure data-fit loss (no regularizer) for the ridge slice.
-loss_raw = ext.field_loss(field_ref, Magpie.SingleShooting(), [(ts, Xnoisy)];
-                          tspan, u0=u0, λ=0.0, λσ=0.0)
+loss_raw = ext.field_loss(
+    field_ref, Magpie.SingleShooting(), [(ts, Xnoisy)];
+    tspan, u0 = u0, λ = 0.0, λσ = 0.0
+)
 loss_at_opt = loss_raw(vopt)
 @info "Data-fit loss at reference optimum" loss_at_opt
 
 logℓ_ref, logσ_ref = vopt[1], vopt[2]
-xs = range(logℓ_ref - 1.2, logℓ_ref + 1.2; length=11)  # logℓ axis
-ys = range(logσ_ref - 1.5, logσ_ref + 1.5; length=11)  # logσ axis
+xs = range(logℓ_ref - 1.2, logℓ_ref + 1.2; length = 11)  # logℓ axis
+ys = range(logσ_ref - 1.5, logσ_ref + 1.5; length = 11)  # logσ axis
 
 @info "Computing 11×11 ridge slice (121 forward solves, w fixed at reference optimum)..."
-M_slice = ridge_slice(loss_raw, vopt; idx=(1,2), grid=(xs, ys))
+M_slice = ridge_slice(loss_raw, vopt; idx = (1, 2), grid = (xs, ys))
 
 # Ridge flatness: full-grid range vs valley-internal range.
 # "Valley" = cells with data-fit loss < 3× the minimum value in the slice.
-loss_vals_finite  = filter(v -> isfinite(v) && v < 1e5, vec(M_slice))
-loss_min          = minimum(loss_vals_finite)
-loss_range_full   = maximum(loss_vals_finite) - loss_min
-valley_vals       = filter(v -> v < loss_min * 3.0, loss_vals_finite)
+loss_vals_finite = filter(v -> isfinite(v) && v < 1.0e5, vec(M_slice))
+loss_min = minimum(loss_vals_finite)
+loss_range_full = maximum(loss_vals_finite) - loss_min
+valley_vals = filter(v -> v < loss_min * 3.0, loss_vals_finite)
 loss_range_valley = isempty(valley_vals) ? 0.0 : maximum(valley_vals) - minimum(valley_vals)
-flatness_ratio    = loss_range_full / max(loss_range_valley, 1e-10)
+flatness_ratio = loss_range_full / max(loss_range_valley, 1.0e-10)
 
-@info "Ridge flatness (w fixed at optimum)" valley_range=round(loss_range_valley;digits=3) full_range=round(loss_range_full;digits=3) ratio=round(flatness_ratio;digits=0)
+@info "Ridge flatness (w fixed at optimum)" valley_range = round(loss_range_valley; digits = 3) full_range = round(loss_range_full; digits = 3) ratio = round(flatness_ratio; digits = 0)
 
 # Heatmap (clamp diverged solves to a finite ceiling).
 M_plot = clamp.(M_slice, 0.0, loss_at_opt * 8)
-p_ridge = heatmap(collect(xs), collect(ys), M_plot';
-    xlabel="logℓ", ylabel="logσ",
-    title="Data-fit landscape: (logℓ, logσ) with w fixed at optimum",
-    color=:viridis, clims=(minimum(M_plot), loss_at_opt * 5))
-scatter!(p_ridge, [logℓ_ref], [logσ_ref]; marker=:star5, ms=10, mc=:red, label="ref optimum")
+p_ridge = heatmap(
+    collect(xs), collect(ys), M_plot';
+    xlabel = "logℓ", ylabel = "logσ",
+    title = "Data-fit landscape: (logℓ, logσ) with w fixed at optimum",
+    color = :viridis, clims = (minimum(M_plot), loss_at_opt * 5)
+)
+scatter!(p_ridge, [logℓ_ref], [logσ_ref]; marker = :star5, ms = 10, mc = :red, label = "ref optimum")
 savefig(p_ridge, "identifiability_ridge.png")
 
 # ## 2. Multi-seed training: converge to different ridge solutions
@@ -108,25 +112,25 @@ SEED_INITS = [(1, 0.0), (10, 1.5), (17, 0.3)]   # (seed, logℓ₀)
 
 _train_seed(seed, logℓ0) = begin
     Random.seed!(seed)
-    f = ExactGPField(SqExponentialKernel(), Z; d=2, logℓ0=logℓ0)
-    f, v = train!(f, (ts, Xnoisy); tspan, maxiters=150, λ=1e-4, s=0.5)
+    f = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = logℓ0)
+    f, v = train!(f, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
     # Trajectory RMSE: integrate GP mean field vs clean truth (same metric as the LV example).
     gps = posterior_gps(f, v)
     gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
-    sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat=ts))
+    sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
     traj_rmse = sqrt(sum(abs2, sol_gp .- target) / length(target))
-    (v=v, gps=gps, traj_rmse=traj_rmse)
+    (v = v, gps = gps, traj_rmse = traj_rmse)
 end
 
 @info "Training 3 seeds (weak regulariser)..."
 seed_results = [_train_seed(seed, logℓ0) for (seed, logℓ0) in SEED_INITS]
-vopts_ms     = [r.v     for r in seed_results]
-gps_ms       = [r.gps   for r in seed_results]
-traj_rmses   = [r.traj_rmse for r in seed_results]
+vopts_ms = [r.v     for r in seed_results]
+gps_ms = [r.gps   for r in seed_results]
+traj_rmses = [r.traj_rmse for r in seed_results]
 
 @info "Multi-seed trajectory RMSE (all should be similar — fitted the data):"
 for (i, ((seed, logℓ0), v, rmse)) in enumerate(zip(SEED_INITS, vopts_ms, traj_rmses))
-    @info "  Seed $seed (logℓ₀=$logℓ0)" logℓ=round(v[1];digits=3) logσ=round(v[2];digits=3) traj_rmse=round(rmse;digits=4)
+    @info "  Seed $seed (logℓ₀=$logℓ0)" logℓ = round(v[1]; digits = 3) logσ = round(v[2]; digits = 3) traj_rmse = round(rmse; digits = 4)
 end
 
 # ## 3. Off-data divergence
@@ -136,13 +140,13 @@ end
 # Even though all seeds fit the training trajectory (similar RMSE), their
 # field predictions diverge off the training support.
 
-prey_grid = range(0.3, 2.5; length=10)
-pred_grid = range(0.3, 3.5; length=10)
-offpts    = vec([[p1, p2] for p1 in prey_grid, p2 in pred_grid])
+prey_grid = range(0.3, 2.5; length = 10)
+pred_grid = range(0.3, 3.5; length = 10)
+offpts = vec([[p1, p2] for p1 in prey_grid, p2 in pred_grid])
 
 ferrs_ms = map(enumerate(zip(SEED_INITS, gps_ms))) do (i, ((seed, logℓ0), gps))
     fe = field_error(gps, lv_true, offpts)
-    @info "  Off-data field error" seed logℓ=round(vopts_ms[i][1];digits=3) median=round(fe.median;digits=4) q90=round(fe.q90;digits=4)
+    @info "  Off-data field error" seed logℓ = round(vopts_ms[i][1]; digits = 3) median = round(fe.median; digits = 4) q90 = round(fe.q90; digits = 4)
     fe
 end
 
@@ -150,27 +154,33 @@ all_medians_ms = [fe.median for fe in ferrs_ms]
 ferr_spread_ms = maximum(all_medians_ms) - minimum(all_medians_ms)
 traj_rmse_spread = maximum(traj_rmses) - minimum(traj_rmses)
 
-@info "Summary" traj_rmse_spread=round(traj_rmse_spread;digits=4) ferr_spread=round(ferr_spread_ms;digits=4) medians=round.(all_medians_ms;digits=4)
+@info "Summary" traj_rmse_spread = round(traj_rmse_spread; digits = 4) ferr_spread = round(ferr_spread_ms; digits = 4) medians = round.(all_medians_ms; digits = 4)
 
 # ## 4. Visualise the divergence
 #
 # Two side-by-side bars: trajectory RMSE (should be similar) and off-data field
 # error (should diverge) for each seed solution.
 
-seed_labels = ["seed $(s)\nlogℓ=$(round(v[1];digits=2))"
-               for ((s, li), v) in zip(SEED_INITS, vopts_ms)]
+seed_labels = [
+    "seed $(s)\nlogℓ=$(round(v[1]; digits = 2))"
+        for ((s, li), v) in zip(SEED_INITS, vopts_ms)
+]
 
-p_rmse = bar(seed_labels, traj_rmses;
-    ylabel="Trajectory RMSE",
-    title="On-data fit (similar — all fit the trajectory)",
-    legend=false, color=:steelblue)
+p_rmse = bar(
+    seed_labels, traj_rmses;
+    ylabel = "Trajectory RMSE",
+    title = "On-data fit (similar — all fit the trajectory)",
+    legend = false, color = :steelblue
+)
 
-p_ferr = bar(seed_labels, all_medians_ms;
-    ylabel="Field error (off-data median)",
-    title="Off-data divergence (similar on-data, diverging off-data)",
-    legend=false, color=:orange)
+p_ferr = bar(
+    seed_labels, all_medians_ms;
+    ylabel = "Field error (off-data median)",
+    title = "Off-data divergence (similar on-data, diverging off-data)",
+    legend = false, color = :orange
+)
 
-p_both = plot(p_rmse, p_ferr; layout=(1,2), size=(800, 350))
+p_both = plot(p_rmse, p_ferr; layout = (1, 2), size = (800, 350))
 savefig(p_both, "identifiability_divergence.png")
 
 # ## Anti-rot assertions (#src lines run on direct execution only)

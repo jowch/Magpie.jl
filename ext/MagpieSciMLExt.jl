@@ -42,9 +42,11 @@ per `v`, outside any trajectory/segment loop.
 # ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v` and threads it
 # into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via the trailing kw...).
 field_loss(field, shooting, data; kw...) =
-    v -> shooting_data_term(field, shooting, field_rhs(field, v), data;
-                            logσ_obs=v[Magpie.NHYP], kw...) +
-         Magpie.regularizer(field, v; kw...)
+    v -> shooting_data_term(
+    field, shooting, field_rhs(field, v), data;
+    logσ_obs = v[Magpie.NHYP], kw...
+) +
+    Magpie.regularizer(field, v; kw...)
 
 # --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
 
@@ -59,7 +61,7 @@ The `known` closure is called every RHS evaluation but carries no trained params
 function field_rhs(cf::Magpie.CompositeField, v)
     pf, _ = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf (inner closure unused — CompositeField rebuilds via gpfield)
     known = cf.known                         # do NOT closure-capture α or pf — only the fixed known fn
-    function rhs!(du, u, _pf, t; known_physics=(u,t)->zero(u))
+    function rhs!(du, u, _pf, t; known_physics = (u, t) -> zero(u))
         du .= known(u, t)                    # known physics first (baked in; ignores kwarg known_physics)
         du .+= gpfield(cf.gp, u, _pf)       # GP residual (α threaded in _pf, R1)
         return nothing
@@ -75,9 +77,9 @@ Build the ExactGPField RHS at trained params `v`: solves `α = (K_ZZ + σ_n² I)
 returns `rhs!(du, u, pf, t)` adding `kuZ'·α`. α is NEVER closure-captured.
 """
 function field_rhs(field::ExactGPField, v)
-    L  = FieldLayout(field.n, field.d)
-    h  = Magpie.hyp(L, v)
-    α  = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED, in-loss
+    L = FieldLayout(field.n, field.d)
+    h = Magpie.hyp(L, v)
+    α = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED, in-loss
     pf = vcat(h.logℓ, h.logσ, vec(α))                                          # α threaded into pf (R1)
     rhs!(du, u, _pf, t; known_physics) = (du .= known_physics(u, t); du .+= gpfield(field, u, _pf); nothing)
     return (pf, rhs!)
@@ -93,22 +95,22 @@ Build the SVGPField RHS at trained params `v`: forms the ONE shared-Z Cholesky `
 function field_rhs(field::SVGPField, v)
     M, dout, D = field.M, field.dout, field.D
     logℓ, logσ = v[1], v[2]
-    k    = Magpie._kernel(logℓ, logσ)
-    Z    = Magpie.svgp_Z(field, v)        # D×M
-    μ    = Magpie.svgp_μ(field, v)        # M×dout
-    Zvec = [Z[:,j] for j in 1:M]
+    k = Magpie._kernel(logℓ, logσ)
+    Z = Magpie.svgp_Z(field, v)        # D×M
+    μ = Magpie.svgp_μ(field, v)        # M×dout
+    Zvec = [Z[:, j] for j in 1:M]
     # RELATIVE in-loss jitter: field.jitter · σ² — must match posterior/L_ZZ_factor
-    jit  = field.jitter * exp(2*logσ)
-    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L   # ONE shared Cholesky (shared Z)
-    α    = L_ZZ' \ μ                                  # M×dout
-    pf   = vcat(logℓ, logσ, vec(Z), vec(α))          # Z trainable + α threaded into pf (R1)
+    jit = field.jitter * exp(2 * logσ)
+    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit * I).L   # ONE shared Cholesky (shared Z)
+    α = L_ZZ' \ μ                                  # M×dout
+    pf = vcat(logℓ, logσ, vec(Z), vec(α))          # Z trainable + α threaded into pf (R1)
     function rhs!(du, u, _pf, t; known_physics)
         du .= known_physics(u, t)
         kk = Magpie._kernel(_pf[1], _pf[2])
-        Zr = reshape(_pf[3:2+D*M], D, M)
-        αr = reshape(_pf[3+D*M:2+D*M+M*dout], M, dout)
+        Zr = reshape(_pf[3:(2 + D * M)], D, M)
+        αr = reshape(_pf[(3 + D * M):(2 + D * M + M * dout)], M, dout)
         for i in 1:dout
-            du[i] += sum(kk(u, @view Zr[:,j]) * αr[j,i] for j in 1:M)
+            du[i] += sum(kk(u, @view Zr[:, j]) * αr[j, i] for j in 1:M)
         end
         return nothing
     end
@@ -128,25 +130,27 @@ Single-shooting data fit (Gaussian NLL): for each `(ts, X)` in `data`, integrate
 observations. `σ_obs² = exp(2·logσ_obs)`. logσ_obs is the trained observation-noise log-std
 (separate from the K_ZZ conditioning jitter). For single trajectories `u0` defaults to col 1.
 """
-function shooting_data_term(field, ::Magpie.SingleShooting, (pf, rhs!), data;
-                            logσ_obs, u0=nothing, tspan=nothing, known_physics=(u,t)->zero(u),
-                            solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
+function shooting_data_term(
+        field, ::Magpie.SingleShooting, (pf, rhs!), data;
+        logσ_obs, u0 = nothing, tspan = nothing, known_physics = (u, t) -> zero(u),
+        solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
+    )
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
     T = eltype(pf)
-    σ2 = exp(2*logσ_obs)
+    σ2 = exp(2 * logσ_obs)
     sse = zero(T)
-    Nd  = 0
+    Nd = 0
     for (ts, X) in data
-        ic  = u0 === nothing ? collect(X[:, 1]) : u0
+        ic = u0 === nothing ? collect(X[:, 1]) : u0
         tsp = tspan === nothing ? (first(ts), last(ts)) : tspan
-        sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat=ts, sensealg)
+        sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat = ts, sensealg)
         A = Array(sol)                                  # R2: Array(sol), never sol[:,i]
-        size(A) == size(X) || return convert(T, 1e6)    # divergence guard → finite sentinel
+        size(A) == size(X) || return convert(T, 1.0e6)    # divergence guard → finite sentinel
         sse += sum(abs2, A .- X)
-        Nd  += length(X)
+        Nd += length(X)
     end
     # Gaussian NLL: SSE/(2σ²) + (Nd/2)·log(2π σ²). σ_obs is scale-not-ratio (identifiable).
-    return sse/(2σ2) + (Nd/2)*log(2π*σ2)
+    return sse / (2σ2) + (Nd / 2) * log(2π * σ2)
 end
 
 """
@@ -158,27 +162,31 @@ NLL (`Σ(endp−X)²/(2σ_obs²) + (Sd/2)·log(2π σ_obs²)`, σ_obs²=exp(2·l
 shooting; the continuity penalty `ms.λ` and node-0 anchor penalty `ms.λ0` are soft constraints (own
 weights), not data likelihood, so they stay un-scaled. `s0` is supplied by the caller.
 """
-function shooting_data_term(field, ms::Magpie.MultipleShooting, (pf, rhs!), data;
-                            logσ_obs, s0, known_physics=(u,t)->zero(u),
-                            solver=Tsit5(), sensealg=DEFAULT_SENSEALG, _kw...)
+function shooting_data_term(
+        field, ms::Magpie.MultipleShooting, (pf, rhs!), data;
+        logσ_obs, s0, known_physics = (u, t) -> zero(u),
+        solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
+    )
     (ts, X) = only(data)
     S = ms.nsegments
-    seg_idx = round.(Int, range(1, length(ts); length=S+1))
-    seg_t   = [ts[i] for i in seg_idx]
+    seg_idx = round.(Int, range(1, length(ts); length = S + 1))
+    seg_t = [ts[i] for i in seg_idx]
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
-    σ2 = exp(2*logσ_obs)
+    σ2 = exp(2 * logσ_obs)
     dataerr = cont = zero(eltype(pf))
     Nd = 0
     for i in 1:S
-        sol  = solve(ODEProblem(f!, s0[:, i], (seg_t[i], seg_t[i+1]), pf), solver;
-                     saveat=[seg_t[i+1]], sensealg)
+        sol = solve(
+            ODEProblem(f!, s0[:, i], (seg_t[i], seg_t[i + 1]), pf), solver;
+            saveat = [seg_t[i + 1]], sensealg
+        )
         endp = Array(sol)[:, end]                        # R2: Array(sol) before indexing
-        dataerr += sum(abs2, endp .- X[:, seg_idx[i+1]])
+        dataerr += sum(abs2, endp .- X[:, seg_idx[i + 1]])
         Nd += length(endp)
-        i < S && (cont += sum(abs2, endp .- s0[:, i+1]))
+        i < S && (cont += sum(abs2, endp .- s0[:, i + 1]))
     end
     # Gaussian NLL on the data-misfit term (matches SingleShooting); penalties keep their own weights.
-    return dataerr/(2σ2) + (Nd/2)*log(2π*σ2) + ms.λ*cont + ms.λ0*sum(abs2, s0[:, 1] .- X[:, 1])
+    return dataerr / (2σ2) + (Nd / 2) * log(2π * σ2) + ms.λ * cont + ms.λ0 * sum(abs2, s0[:, 1] .- X[:, 1])
 end
 
 # ---------------------------------------------------------------------------
@@ -188,29 +196,33 @@ end
 
 # Stage-1 single-shooting loss. Old reg = λ·logℓ + λσ·logσ (ExactGPField regularizer default).
 make_loss(field::ExactGPField, L::FieldLayout, u0, tspan, ts, X; kw...) =
-    field_loss(field, Magpie.SingleShooting(), [(collect(ts), X)]; u0=u0, tspan=tspan, kw...)
+    field_loss(field, Magpie.SingleShooting(), [(collect(ts), X)]; u0 = u0, tspan = tspan, kw...)
 
 # build_loss: Stage-1 SingleShooting + Stage-2 MultipleShooting dispatch.
 # Arg order preserved: (field, L, u_data, t_data, tspan, shooting; kw...).
 function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw...)
     u0 = u_data isa AbstractMatrix ? collect(u_data[:, 1]) : [u_data[1]]
-    field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0=u0, tspan=tspan, kw...)
+    return field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0 = u0, tspan = tspan, kw...)
 end
 
 # Stage-2 multiple shooting. The trained vector is [logℓ, logσ, logσ_obs, vec(w), vec(s0)] (s0 is d×S);
 # the loss extracts s0 from `v` then forwards to shooting_data_term. Old MS reg was logℓ-only
 # (no λσ term) — preserved by passing λσ=0.0 to the field regularizer. The s0 block starts AFTER the
 # hyper prefix + the w-block: offset NHYP + nwL (routed through Magpie.NHYP — no hardcoded 3).
-function build_loss(field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
-                    ms::Magpie.MultipleShooting; kw...)
-    S   = ms.nsegments
+function build_loss(
+        field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
+        ms::Magpie.MultipleShooting; kw...
+    )
+    S = ms.nsegments
     nwL = L.n * L.d
     off = Magpie.NHYP + nwL                                     # s0 starts after [logℓ,logσ,logσ_obs,vec(w)]
-    regkw = merge((λσ=0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
+    regkw = merge((λσ = 0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
     return function loss(v)
-        s0 = reshape(v[off+1 : off + field.d*S], field.d, S)
-        shooting_data_term(field, ms, field_rhs(field, v), [(collect(t_data), u_data)];
-                           s0=s0, logσ_obs=v[Magpie.NHYP], kw...) +
+        s0 = reshape(v[(off + 1):(off + field.d * S)], field.d, S)
+        return shooting_data_term(
+            field, ms, field_rhs(field, v), [(collect(t_data), u_data)];
+            s0 = s0, logσ_obs = v[Magpie.NHYP], kw...
+        ) +
             Magpie.regularizer(field, v; regkw...)
     end
 end
@@ -224,8 +236,8 @@ _init_vec(field, u_data, t_data, ::Magpie.SingleShooting) = copy(field.v0)
 
 # MultipleShooting: append per-segment initial nodes (seeded from data) to the field params
 function _init_vec(field, u_data, t_data, ms::Magpie.MultipleShooting)
-    idx = round.(Int, range(1, length(t_data); length=ms.nsegments+1))
-    s0  = hcat([collect(u_data[:, idx[i]]) for i in 1:ms.nsegments]...)   # d × S nodes from data
+    idx = round.(Int, range(1, length(t_data); length = ms.nsegments + 1))
+    s0 = hcat([collect(u_data[:, idx[i]]) for i in 1:ms.nsegments]...)   # d × S nodes from data
     return vcat(copy(field.v0), vec(s0))
 end
 
@@ -244,7 +256,7 @@ _as_trajectories(data::Tuple) = [data]
 function _train_loss(field::ExactGPField, trajs, shooting, tspan; kw...)
     (t_data, u_data) = only(trajs)                 # Exact training is single-trajectory
     L = FieldLayout(field.n, field.d)
-    build_loss(field, L, u_data, t_data, tspan, shooting; kw...)
+    return build_loss(field, L, u_data, t_data, tspan, shooting; kw...)
 end
 _train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; kw...) =
     svgp_elbo_loss(field, trajs; tspan, kw...)
@@ -252,7 +264,7 @@ _train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; kw...) =
 # CompositeField: forward to field_loss (field_rhs for CompositeField is defined above).
 # The trained-vector layout IS the inner gp's (CompositeField delegates all layout to cf.gp).
 function _train_loss(cf::Magpie.CompositeField, trajs, shooting, tspan; kw...)
-    field_loss(cf, shooting, trajs; tspan=tspan, kw...)
+    return field_loss(cf, shooting, trajs; tspan = tspan, kw...)
 end
 
 # Per-field initial optimisation vector (Exact MS appends per-segment s0 nodes; SVGP = field.v0).
@@ -265,19 +277,21 @@ _train_init(cf::Magpie.CompositeField, trajs, shooting) =
 
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
-function Magpie.train!(field::GPField, data;
-                       shooting=Magpie.SingleShooting(),
-                       tspan=nothing,
-                       ad=DI.AutoMooncake(; config=nothing),
-                       adam_lr=0.05, adam_iters=1000, optimizer=LBFGS(), maxiters=200, kw...)
+function Magpie.train!(
+        field::GPField, data;
+        shooting = Magpie.SingleShooting(),
+        tspan = nothing,
+        ad = DI.AutoMooncake(; config = nothing),
+        adam_lr = 0.05, adam_iters = 1000, optimizer = LBFGS(), maxiters = 200, kw...
+    )
     trajs = _as_trajectories(data)
-    tsp   = tspan === nothing ? (first(trajs[1][1]), last(trajs[1][1])) : tspan
-    loss  = _train_loss(field, trajs, shooting, tsp; kw...)
+    tsp = tspan === nothing ? (first(trajs[1][1]), last(trajs[1][1])) : tspan
+    loss = _train_loss(field, trajs, shooting, tsp; kw...)
     v_init = _train_init(field, trajs, shooting)
     optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
     v = v_init
     if adam_iters > 0
-        s1 = Optimization.solve(Optimization.OptimizationProblem(optf, v), Adam(adam_lr); maxiters=adam_iters)
+        s1 = Optimization.solve(Optimization.OptimizationProblem(optf, v), Adam(adam_lr); maxiters = adam_iters)
         v = s1.u
     end
     sol = Optimization.solve(Optimization.OptimizationProblem(optf, v), optimizer; maxiters)
@@ -302,7 +316,7 @@ Magpie.posterior(cf::Magpie.CompositeField, v) = Magpie.posterior(cf.gp, v)
 function Magpie.posterior(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d); h = Magpie.hyp(L, v)
     k = Magpie._kernel(h.logℓ, h.logσ)
-    jit = exp(field.lognoise + 2*h.logσ)          # RELATIVE jitter — must match solve_alpha so α == the trained field's
+    jit = exp(field.lognoise + 2 * h.logσ)          # RELATIVE jitter — must match solve_alpha so α == the trained field's
     K = kernelmatrix(k, field.Z) + jit * I
     C = _chol(K)
     α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
@@ -337,7 +351,7 @@ Z is in the param vector (trainable); never closure-captured (R1).
 # Preserves the exact ELBO (data + KL + logℓ prior) via field_loss → SVGP field_rhs +
 # field-agnostic shooting_data_term + the SVGPField regularizer (KL + logℓ prior, once).
 svgp_elbo_loss(field::SVGPField, trajectories; tspan, kw...) =
-    field_loss(field, Magpie.SingleShooting(), trajectories; tspan=tspan, kw...)
+    field_loss(field, Magpie.SingleShooting(), trajectories; tspan = tspan, kw...)
 
 # ---------------------------------------------------------------------------
 # posterior(::SVGPField): reconstruct dout SparseGPs from trained params. Task 7b.
@@ -346,17 +360,21 @@ svgp_elbo_loss(field::SVGPField, trajectories; tspan, kw...) =
 
 function Magpie.posterior(field::SVGPField, v)
     logσ = v[2]
-    k  = Magpie._kernel(v[1], logσ)
-    Z  = Magpie.svgp_Z(field, v)
-    Zvec = [Z[:,j] for j in 1:field.M]
+    k = Magpie._kernel(v[1], logσ)
+    Z = Magpie.svgp_Z(field, v)
+    Zvec = [Z[:, j] for j in 1:field.M]
     # RELATIVE jitter — must match field_rhs(::SVGPField) (field.jitter · σ²)
-    jit  = field.jitter * exp(2*logσ)
-    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit*I).L
-    μ    = Magpie.svgp_μ(field, v)                   # M×dout
+    jit = field.jitter * exp(2 * logσ)
+    L_ZZ = _chol(kernelmatrix(k, Zvec) + jit * I).L
+    μ = Magpie.svgp_μ(field, v)                   # M×dout
     prior = AbstractGPs.GP(field.prior.mean, k)
-    return [SparseGP(prior, Zvec, L_ZZ' \ μ[:,i], L_ZZ,
-                     Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M))
-            for i in 1:field.dout]
+    return [
+        SparseGP(
+                prior, Zvec, L_ZZ' \ μ[:, i], L_ZZ,
+                Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M)
+            )
+            for i in 1:field.dout
+    ]
 end
 
 # Thin aliases forwarding to `posterior` (call sites + exports unchanged; retire in Phase 6).
@@ -392,18 +410,20 @@ Note: the field-variance term is h²·Vₙ — Euler `x→x+h·f` gives `Var(h·
 white-noise rate h·Vₙ). Exact linear-field oracle is eq 21b Σ(t)=(β/a²)(1−e^{at})² (coherent),
 not the white-noise (β/−2a)(1−e^{2at}); the cross-cov Dₙ realizes the coherence ("past matters").
 """
-function pull_propagate(gps, u0, ts; buffer::Int=20)
+function pull_propagate(gps, u0, ts; buffer::Int = 20)
     d = length(u0); μ = collect(float.(u0)); Σ = zeros(d, d)
     μs = [copy(μ)]; Σs = [copy(Σ)]; histμ = [copy(μ)]; histA = Matrix{Float64}[]
-    for n in 1:(length(ts)-1)
-        h = ts[n+1] - ts[n]
+    for n in 1:(length(ts) - 1)
+        h = ts[n + 1] - ts[n]
         A = I + h .* pull_jacobian(gps, μ)
         V = field_var(gps, μ)                                # marginal variance V_n (buffer-free term)
         Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
         # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
         # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
-        Σ = Matrix(Symmetric(A*Σ*A' + h^2 .* Matrix(V) + h .* (A*Dn + Dn'*A')))
-        for k in 1:d; Σ[k,k] < 0 && (@warn "PULL: negative variance clamped" step=n; Σ[k,k]=eps()); end
+        Σ = Matrix(Symmetric(A * Σ * A' + h^2 .* Matrix(V) + h .* (A * Dn + Dn' * A')))
+        for k in 1:d
+            Σ[k, k] < 0 && (@warn "PULL: negative variance clamped" step = n; Σ[k, k] = eps())
+        end
         μ = μ + h .* field_mean(gps, μ)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
     end
@@ -424,7 +444,7 @@ runs back to lo. The key index fixes vs the original buggy loop:
   - `npast` (not `length(histμ)`) as the upper bound — excludes the self-term.
   - `histA[i]` (not `histA[i-1]`) — correct Jacobian at past state i.
 """
-function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int=20)
+function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = 20)
     Dn = zeros(d, d)
     buffer == 0 && return Dn
     npast = length(histμ) - 1                      # exclude the current state (self term)
@@ -447,11 +467,11 @@ Internal: propagate the mean path and return the per-step Dₙ sequence (one mat
 time step, length = length(ts)-1). Used by tests to assert the cross-cov telescope
 against a brute-force reference in a non-constant-Jacobian regime.
 """
-function _pull_Dn_sequence(gps, u0, ts; buffer::Int=20)
+function _pull_Dn_sequence(gps, u0, ts; buffer::Int = 20)
     d = length(u0); μ = collect(float.(u0))
     histμ = [copy(μ)]; histA = Matrix{Float64}[]; Dns = Matrix{Float64}[]
-    for n in 1:(length(ts)-1)
-        h = ts[n+1] - ts[n]
+    for n in 1:(length(ts) - 1)
+        h = ts[n + 1] - ts[n]
         A = I + h .* pull_jacobian(gps, μ)
         Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
         push!(Dns, copy(Dn))
@@ -481,10 +501,12 @@ Propagate uncertainty through a GP vector field (one `ExactGP` per output dimens
 
 Returns `(μs, Σs)` for PULL, or an `N × d × length(ts)` array for Pathwise.
 """
-function Magpie.propagate(gps::AbstractVector{<:ExactGP}, u0, tspan;
-                          method=Magpie.PULL(),
-                          ts=collect(range(tspan...; length=21)),
-                          buffer=20)
+function Magpie.propagate(
+        gps::AbstractVector{<:ExactGP}, u0, tspan;
+        method = Magpie.PULL(),
+        ts = collect(range(tspan...; length = 21)),
+        buffer = 20
+    )
     method isa Magpie.PULL && return pull_propagate(gps, u0, ts; buffer)
     return _pathwise(gps, u0, tspan, ts, method)
 end
@@ -502,20 +524,28 @@ function _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise)
     d = length(u0); S = m.n
     out = zeros(S, d, length(ts))
     for sidx in 1:S
-        samplers = [begin
-            k = g.prior.kernel                                    # ScaledKernel (carries σ²)
-            ℓ = Magpie._lengthscale(k)                            # peel ScaledKernel → inner TransformedKernel
-            σ = sqrt(k(g.x[1], g.x[1]))                           # k(x,x) = σ² for stationary SE
-            # Draw a consistent inducing-value sample from the posterior at the anchors.
-            uvals = Magpie.mean(g, g.x) .+
-                    Magpie._chol(Magpie.cov(g, g.x) + 1e-8 * I).L *
+        samplers = [
+            begin
+                    k = g.prior.kernel                                    # ScaledKernel (carries σ²)
+                    ℓ = Magpie._lengthscale(k)                            # peel ScaledKernel → inner TransformedKernel
+                    σ = sqrt(k(g.x[1], g.x[1]))                           # k(x,x) = σ² for stationary SE
+                    # Draw a consistent inducing-value sample from the posterior at the anchors.
+                    uvals = Magpie.mean(g, g.x) .+
+                    Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L *
                     randn(MersenneTwister(sidx * 131 + i), length(g.x))
-            Magpie.build_decoupled_sample(k, g.x, uvals;
-                                          ℓ=ℓ, σ=σ,                       # decorrelate the RFF-phase RNG from the
-                                          rng=MersenneTwister(sidx * 131 + i + 500_000))  # inducing-draw RNG above
-        end for (i, g) in enumerate(gps)]
-        rhs!(du, u, p, t) = (for i in 1:d; du[i] = samplers[i](u); end; nothing)
-        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts)
+                    Magpie.build_decoupled_sample(
+                        k, g.x, uvals;
+                        ℓ = ℓ, σ = σ,                       # decorrelate the RFF-phase RNG from the
+                        rng = MersenneTwister(sidx * 131 + i + 500_000)
+                    )  # inducing-draw RNG above
+                end for (i, g) in enumerate(gps)
+        ]
+        rhs!(du, u, p, t) = (
+            for i in 1:d
+                du[i] = samplers[i](u)
+            end; nothing
+        )
+        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts)
         out[sidx, :, :] = Array(sol)
     end
     return out
@@ -530,10 +560,12 @@ Propagate uncertainty through a sparse GP vector field (one `SparseGP` per outpu
 PULL uses `pull_propagate` (unchanged — `SparseGP` implements `predmean`/`var`/`cov`).
 Pathwise draws from the whitened variational posterior and integrates as plain ODEs.
 """
-function Magpie.propagate(sgps::AbstractVector{<:SparseGP}, u0, tspan;
-                          method=Magpie.PULL(),
-                          ts=collect(range(tspan...; length=21)),
-                          buffer=20)
+function Magpie.propagate(
+        sgps::AbstractVector{<:SparseGP}, u0, tspan;
+        method = Magpie.PULL(),
+        ts = collect(range(tspan...; length = 21)),
+        buffer = 20
+    )
     method isa Magpie.PULL && return pull_propagate(sgps, u0, ts; buffer)
     return _pathwise_svgp(sgps, u0, tspan, ts, method)
 end
@@ -552,22 +584,30 @@ Magpie.propagate(field::SVGPField, u0, tspan; kw...) =
 function _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise)
     d = length(u0); out = zeros(m.n, d, length(ts))
     for sidx in 1:m.n
-        samplers = [begin
-            k = g.prior.kernel
-            ℓ = Magpie._lengthscale(k)
-            σ = sqrt(k(g.Z[1], g.Z[1]))
-            # Recover variational mean μ_i from the stored α = L_ZZ' \ μ_i.
-            μ_i = g.L_ZZ' * g.α
-            # Draw whitened v_s ~ N(μ_i, S) where S = L_S L_S'.
-            v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
-            # Lift to inducing-value sample u_s = L_ZZ v_s.
-            u_s = g.L_ZZ * v_s
-            Magpie.build_decoupled_sample(k, g.Z, u_s;
-                                          ℓ=ℓ, σ=σ,
-                                          rng=MersenneTwister(sidx * 977 + i))
-        end for (i, g) in enumerate(sgps)]
-        rhs!(du, u, p, t) = (for i in 1:d; du[i] = samplers[i](u); end; nothing)
-        out[sidx, :, :] = Array(solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts))
+        samplers = [
+            begin
+                    k = g.prior.kernel
+                    ℓ = Magpie._lengthscale(k)
+                    σ = sqrt(k(g.Z[1], g.Z[1]))
+                    # Recover variational mean μ_i from the stored α = L_ZZ' \ μ_i.
+                    μ_i = g.L_ZZ' * g.α
+                    # Draw whitened v_s ~ N(μ_i, S) where S = L_S L_S'.
+                    v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
+                    # Lift to inducing-value sample u_s = L_ZZ v_s.
+                    u_s = g.L_ZZ * v_s
+                    Magpie.build_decoupled_sample(
+                        k, g.Z, u_s;
+                        ℓ = ℓ, σ = σ,
+                        rng = MersenneTwister(sidx * 977 + i)
+                    )
+                end for (i, g) in enumerate(sgps)
+        ]
+        rhs!(du, u, p, t) = (
+            for i in 1:d
+                du[i] = samplers[i](u)
+            end; nothing
+        )
+        out[sidx, :, :] = Array(solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts))
     end
     return out
 end
@@ -593,17 +633,21 @@ drawn from the residual-GP posterior. Returns an `N × d × length(ts)` array.
 Jacobian of `known + GP_mean`, which is correct but not implemented. Use Pathwise, which
 gives the full composite-field uncertainty without the linear-field assumption.
 """
-function Magpie.propagate(cf::Magpie.CompositeField, u0, tspan;
-                          method=Magpie.Pathwise(128),
-                          ts=collect(range(tspan...; length=21)),
-                          buffer=20)
+function Magpie.propagate(
+        cf::Magpie.CompositeField, u0, tspan;
+        method = Magpie.Pathwise(128),
+        ts = collect(range(tspan...; length = 21)),
+        buffer = 20
+    )
     if method isa Magpie.PULL
-        error("PULL is not implemented for CompositeField. Use Pathwise for composite-field " *
-              "uncertainty propagation (it correctly integrates known_physics + GP sample).")
+        error(
+            "PULL is not implemented for CompositeField. Use Pathwise for composite-field " *
+                "uncertainty propagation (it correctly integrates known_physics + GP sample)."
+        )
     end
     gps = Magpie.posterior(cf)   # residual ExactGPs
     known = cf.known
-    _pathwise_composite(gps, known, u0, tspan, ts, method)
+    return _pathwise_composite(gps, known, u0, tspan, ts, method)
 end
 
 """
@@ -621,26 +665,30 @@ function _pathwise_composite(gps, known, u0, tspan, ts, m::Magpie.Pathwise)
     d = length(u0); S = m.n
     out = zeros(S, d, length(ts))
     for sidx in 1:S
-        samplers = [begin
-            g = gps[i]
-            k = g.prior.kernel
-            ℓ = Magpie._lengthscale(k)
-            σ = sqrt(k(g.x[1], g.x[1]))
-            uvals = Magpie.mean(g, g.x) .+
-                    Magpie._chol(Magpie.cov(g, g.x) + 1e-8 * I).L *
+        samplers = [
+            begin
+                    g = gps[i]
+                    k = g.prior.kernel
+                    ℓ = Magpie._lengthscale(k)
+                    σ = sqrt(k(g.x[1], g.x[1]))
+                    uvals = Magpie.mean(g, g.x) .+
+                    Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L *
                     randn(MersenneTwister(sidx * 131 + i), length(g.x))
-            Magpie.build_decoupled_sample(k, g.x, uvals;
-                                          ℓ=ℓ, σ=σ,
-                                          rng=MersenneTwister(sidx * 131 + i + 500_000))
-        end for i in 1:length(gps)]
+                    Magpie.build_decoupled_sample(
+                        k, g.x, uvals;
+                        ℓ = ℓ, σ = σ,
+                        rng = MersenneTwister(sidx * 131 + i + 500_000)
+                    )
+                end for i in 1:length(gps)
+        ]
         function rhs!(du, u, p, t)
             kphys = known(u, t)
             for i in 1:d
                 du[i] = kphys[i] + samplers[i](u)
             end
-            nothing
+            return nothing
         end
-        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts)
+        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts)
         out[sidx, :, :] = Array(sol)
     end
     return out

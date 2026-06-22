@@ -6,14 +6,14 @@
 
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Statistics, Random, Test
 using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, L_ZZ_factor, SparseGP, predmean,
-              _kernel, ExactGP
+    _kernel, ExactGP
 
 @testset "SVGP math: KL ≥ 0, μ=0 S=I ⇒ KL=0, unpack_LS diagonal = exp(raw)" begin
     M = 5
 
     # μ=0, S=I → KL = 0
     S_I = LowerTriangular(Matrix(1.0I, M, M))
-    @test svgp_kl(zeros(M), S_I) ≈ 0.0 atol=1e-12
+    @test svgp_kl(zeros(M), S_I) ≈ 0.0 atol = 1.0e-12
 
     # μ≠0, S=I → KL > 0
     @test svgp_kl(ones(M), S_I) > 0
@@ -30,7 +30,7 @@ using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, L_ZZ_factor, SparseGP, pred
 
     # unpack_LS: diagonal entries = exp(raw diagonal entries)
     raw_diag = 0.5 .* randn(rng, M)
-    raw_off  = 0.1 .* randn(rng, nLS(M) - M)
+    raw_off = 0.1 .* randn(rng, nLS(M) - M)
     Lraw = vcat(raw_diag, raw_off)  # column-major lower: first M entries are diagonal
     # Actually the column-major layout packs diagonal as j=i in the j,i loop
     # Rebuild properly: indices go j in 1:M, i in j:M  → first entry is (1,1), then (2,1)...
@@ -58,10 +58,10 @@ end
     rng = MersenneTwister(7)
     M = 4
     kernel = SqExponentialKernel()
-    prior  = AbstractGPs.GP(kernel)
+    prior = AbstractGPs.GP(kernel)
 
     # Inducing points in 1D
-    Z = [[z] for z in range(-2.0, 2.0; length=M)]
+    Z = [[z] for z in range(-2.0, 2.0; length = M)]
 
     # Random variational params
     raw = vcat(zeros(M), 0.2 .* randn(rng, nLS(M) - M))  # diag raw=0 ⇒ exp=1
@@ -81,28 +81,28 @@ end
     μ_u, σ2_u = svgp_moments(prior, Z, L_ZZ, g.α, L_S, u)
     @test isfinite(μ_u)
     @test isfinite(σ2_u)
-    @test σ2_u ≥ -1e-10  # non-negative within numerical tolerance
+    @test σ2_u ≥ -1.0e-10  # non-negative within numerical tolerance
 
     pm = predmean(g, u)
     @test isfinite(pm)
 
     # mean/var/cov on a vector of inputs
-    xs = [[x] for x in range(-1.5, 1.5; length=6)]
+    xs = [[x] for x in range(-1.5, 1.5; length = 6)]
     ms = Statistics.mean(g, xs)
     vs = Statistics.var(g, xs)
     @test length(ms) == length(xs)
     @test all(isfinite, ms)
     @test all(isfinite, vs)
-    @test all(v -> v ≥ -1e-10, vs)
+    @test all(v -> v ≥ -1.0e-10, vs)
 
     # cov(g, xs) — full covariance matrix, should be symmetric (within float tol)
     Σ = Statistics.cov(g, xs)
     @test size(Σ) == (length(xs), length(xs))
     @test all(isfinite, Σ)
-    @test norm(Σ - Σ') < 1e-10  # symmetric
+    @test norm(Σ - Σ') < 1.0e-10  # symmetric
 
     # cov(g, xs, ys) — cross-covariance
-    ys = [[x] for x in range(-0.5, 0.5; length=4)]
+    ys = [[x] for x in range(-0.5, 0.5; length = 4)]
     C = Statistics.cov(g, xs, ys)
     @test size(C) == (length(xs), length(ys))
     @test all(isfinite, C)
@@ -112,7 +112,7 @@ end
     rng = MersenneTwister(99)
     M = 4
     kernel = SqExponentialKernel()
-    prior  = AbstractGPs.GP(kernel)
+    prior = AbstractGPs.GP(kernel)
 
     # Force two nearly-identical inducing points
     Z_dup = [[0.0], [0.0], [1.0], [2.0]]  # first two are identical
@@ -154,7 +154,7 @@ end
         S = Matrix(L_S) * Matrix(L_S)'
         kl_direct = 0.5 * (tr(S) + dot(μ, μ) - M - logdet(S))
         kl_fn = svgp_kl(μ, L_S)
-        @test kl_fn ≈ kl_direct rtol=1e-10
+        @test kl_fn ≈ kl_direct rtol = 1.0e-10
         @test kl_fn ≥ 0.0
     end
 end
@@ -178,17 +178,17 @@ end
 # ---------------------------------------------------------------------------
 @testset "Task 7b: svgp_moments variational-correction term (non-trivial L_S, rtol=1e-10)" begin
     rng = MersenneTwister(17)
-    M   = 4
+    M = 4
     kernel = _kernel(0.0, 0.0)   # ℓ=1, σ=1 (same as Task 4.1)
-    prior  = AbstractGPs.GP(kernel)
+    prior = AbstractGPs.GP(kernel)
 
-    Z = [[z] for z in range(-1.5, 1.5; length=M)]
+    Z = [[z] for z in range(-1.5, 1.5; length = M)]
     L_ZZ = L_ZZ_factor(prior, Z)   # default jitter=1e-4
 
     # Non-trivial L_S: diagonal 0.5 + small random off-diagonal entries
     L_S_mat = zeros(M, M)
     for j in 1:M, i in j:M
-        L_S_mat[i,j] = (i == j) ? 0.5 : 0.05 * randn(rng)
+        L_S_mat[i, j] = (i == j) ? 0.5 : 0.05 * randn(rng)
     end
     L_S = LowerTriangular(L_S_mat)
 
@@ -201,8 +201,8 @@ end
     μ_star, σ2 = svgp_moments(prior, Z, L_ZZ, α, L_S, u)
 
     # Independent reference computation
-    kZu      = vec(AbstractGPs.cov(prior, Z, [u]))
-    A        = L_ZZ \ kZu
+    kZu = vec(AbstractGPs.cov(prior, Z, [u]))
+    A = L_ZZ \ kZu
     correction = sum(abs2, L_S' * A)
     expected_σ2 = only(AbstractGPs.var(prior, [u])) - dot(A, A) + correction
 
@@ -210,34 +210,34 @@ end
     @test correction > 0.01
 
     # Tight self-consistency oracle — catches sign flip, wrong factor (L_S vs L_S'), etc.
-    @test σ2 ≈ expected_σ2 rtol=1e-10
+    @test σ2 ≈ expected_σ2 rtol = 1.0e-10
 
     # Mean is unaffected by L_S; sanity-check it too
     expected_μ = only(AbstractGPs.mean(prior, [u])) + dot(kZu, α)
-    @test μ_star ≈ expected_μ rtol=1e-10
+    @test μ_star ≈ expected_μ rtol = 1.0e-10
 end
 
 @testset "Task 4.1: SVGP = ExactGP in M=N limit (rtol=1e-6 on mean/var)" begin
     rng = MersenneTwister(1)
     N = 6
     kernel = _kernel(0.0, 0.0)   # ℓ=1, σ=1
-    X = [[x] for x in range(-2.0, 2.0; length=N)]
+    X = [[x] for x in range(-2.0, 2.0; length = N)]
     y = sin.(first.(X))
 
     # Choose σ_n² that equals the absolute jitter that L_ZZ_factor will add.
     # L_ZZ_factor uses jitter_rel * s2 as the absolute shift.
     # With s2 = mean(diag(K_ZZ)) = 1 for SE kernel at scale σ=1, jitter_rel = σ_n².
-    σ_n2   = 1e-10
-    prior  = AbstractGPs.GP(kernel)
-    K_ZZ   = AbstractGPs.cov(prior, X)
-    s2     = mean(diag(K_ZZ))          # should be 1.0
+    σ_n2 = 1.0e-10
+    prior = AbstractGPs.GP(kernel)
+    K_ZZ = AbstractGPs.cov(prior, X)
+    s2 = mean(diag(K_ZZ))          # should be 1.0
     jitter_rel = σ_n2 / s2             # = 1e-10 when s2=1
 
     # ExactGP reference with the same noise
-    gp_exact = Magpie.update(ExactGP(kernel; noise=σ_n2), X, y)
+    gp_exact = Magpie.update(ExactGP(kernel; noise = σ_n2), X, y)
 
     # L_ZZ with the matching jitter so L_ZZ L_ZZ' = K_ZZ + σ_n² I exactly
-    L_ZZ = L_ZZ_factor(prior, X; jitter=jitter_rel)
+    L_ZZ = L_ZZ_factor(prior, X; jitter = jitter_rel)
 
     # Whitened variational mean: μ_v = L_ZZ \ y
     # → α_stored = L_ZZ' \ μ_v = (L_ZZ L_ZZ')⁻¹ y = (K_ZZ + σ_n²I)⁻¹ y  ✓
@@ -245,24 +245,26 @@ end
 
     # Collapsed variational covariance L_S = ε·I (near-Dirac)
     # → ‖L_S' A‖² = ε² ‖A‖² < 1e-28, negligible vs any variance we test
-    ε_S  = 1e-15
+    ε_S = 1.0e-15
     L_S_mat = zeros(N, N)
-    for i in 1:N; L_S_mat[i,i] = ε_S; end
+    for i in 1:N
+        L_S_mat[i, i] = ε_S
+    end
     L_S = LowerTriangular(L_S_mat)
 
-    g_svgp = SparseGP(prior, X, μ_v, L_S; jitter=jitter_rel)
+    g_svgp = SparseGP(prior, X, μ_v, L_S; jitter = jitter_rel)
 
     # Off-inducing test points
     xs_test = [[x] for x in [-1.5, -0.7, 0.0, 0.8, 1.3]]
 
     m_exact = Statistics.mean(gp_exact, xs_test)
     v_exact = Statistics.var(gp_exact, xs_test)
-    m_svgp  = Statistics.mean(g_svgp, xs_test)
-    v_svgp  = Statistics.var(g_svgp, xs_test)
+    m_svgp = Statistics.mean(g_svgp, xs_test)
+    v_svgp = Statistics.var(g_svgp, xs_test)
 
     # Mean: should agree to near machine precision (rtol=1e-6 guaranteed; ~1e-15 achieved)
-    @test m_svgp ≈ m_exact rtol=1e-6
+    @test m_svgp ≈ m_exact rtol = 1.0e-6
 
     # Variance: ε_S² contribution is < 1e-28; exact agreement expected
-    @test v_svgp ≈ v_exact rtol=1e-6
+    @test v_svgp ≈ v_exact rtol = 1.0e-6
 end

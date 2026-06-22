@@ -27,13 +27,13 @@ The `field_rhs` in the extension bakes `known` into the closure so the returned 
     du .= cf.known(u, t); du .+= gpfield(cf.gp, u, pf)
 This is the proven `du .= known; du .+= gp` ordering, and α stays threaded in `pf` (R1).
 """
-struct CompositeField{Kf,Gf<:GPField} <: GPField
+struct CompositeField{Kf, Gf <: GPField} <: GPField
     known::Kf   # (u,t) -> du_known  (fixed, not trained)
     gp::Gf      # the residual GP field that is trained
 end
 
 # Protocol delegation — CompositeField trains only the inner gp.
-unpack(cf::CompositeField, v)           = unpack(cf.gp, v)
+unpack(cf::CompositeField, v) = unpack(cf.gp, v)
 regularizer(cf::CompositeField, v; kw...) = regularizer(cf.gp, v; kw...)
 
 # v0 accessor: CompositeField is transparent — its trained-vector layout IS the inner gp's.
@@ -43,11 +43,11 @@ regularizer(cf::CompositeField, v; kw...) = regularizer(cf.gp, v; kw...)
 # `field.v0 = sol.u` (no dot) would throw a MethodError (no setproperty! defined; YAGNI).
 Base.getproperty(cf::CompositeField, s::Symbol) =
     s === :known ? getfield(cf, :known) :
-    s === :gp    ? getfield(cf, :gp)   :
+    s === :gp ? getfield(cf, :gp) :
     getproperty(getfield(cf, :gp), s)   # forward n, d, v0, lognoise, etc. to inner gp
 
 """Trainable GP-UDE field: one shared kernel + fixed anchors `Z`, `d` independent outputs."""
-struct ExactGPField{Tp,TZ} <: GPField
+struct ExactGPField{Tp, TZ} <: GPField
     prior::Tp        # AbstractGPs.GP (mean + kernel); kernel hypers are overridden per-eval from pf
     Z::TZ            # Vector{Vector{Float64}} of anchors
     n::Int           # number of anchors
@@ -60,7 +60,7 @@ end
 serve the whole AbstractGP contract via the whitened moments: `α = L_ZZ'\\μ` (predmean), plus the
 inducing Cholesky `L_ZZ` and the variational factor `L_S` (var/cov — needed by SVGP PULL uncertainty).
 mean/var/cov methods are defined in Task 7 via `svgp_moments`."""
-struct SparseGP{Tp,TZ,Tα,TL,TS} <: AbstractGPModel
+struct SparseGP{Tp, TZ, Tα, TL, TS} <: AbstractGPModel
     prior::Tp; Z::TZ; α::Tα; L_ZZ::TL; L_S::TS
 end
 
@@ -72,15 +72,21 @@ end
 const NHYP = 3
 
 "Flat-Vector layout helper for Stage-1/2 trained params `[logℓ, logσ, logσ_obs, vec(w)]` (lognoise is fixed on the field)."
-struct FieldLayout; n::Int; d::Int; end
+struct FieldLayout
+    n::Int; d::Int
+end
 
 # Shooting + uncertainty selector types (named by users; methods live in the ext).
 struct SingleShooting end
-struct MultipleShooting; nsegments::Int; λ::Float64; λ0::Float64; end
-MultipleShooting(; nsegments, λ=100.0, λ0=1e4) = MultipleShooting(nsegments, λ, λ0)
+struct MultipleShooting
+    nsegments::Int; λ::Float64; λ0::Float64
+end
+MultipleShooting(; nsegments, λ = 100.0, λ0 = 1.0e4) = MultipleShooting(nsegments, λ, λ0)
 struct PULL end
-struct Pathwise; n::Int; end
-Pathwise(; n=128) = Pathwise(n)
+struct Pathwise
+    n::Int
+end
+Pathwise(; n = 128) = Pathwise(n)
 
 # Stubs implemented in MagpieSciMLExt (require OrdinaryDiffEq + SciMLSensitivity).
 # Declared in CORE so the ext can EXTEND them and `using Magpie: train!` resolves
@@ -103,7 +109,7 @@ posterior(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using Ordinar
 """Multi-output SVGP field: ONE shared set of `M` inducing points `Z` (in state space), per-output
 variational `(μ, L_S)`, `dout` independent outputs. Trained vector (verified shared-Z layout):
 `[logℓ, logσ, logσ_obs, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))]`; jitter is fixed on the field."""
-struct SVGPField{Tp,TZ} <: GPField
+struct SVGPField{Tp, TZ} <: GPField
     prior::Tp; Z0::TZ; M::Int; dout::Int; D::Int; jitter::Float64; v0::Vector{Float64}
 end
 
@@ -122,11 +128,13 @@ trained observation-noise log-std used by the Gaussian NLL data term, init `log(
 # Mooncake Cholesky-solve BACKWARD (potrs) doesn't hit SingularException when the optimizer explores
 # long lengthscales / near-duplicate anchors — `_chol(check=false)` only guards the forward. Verified:
 # 1e-2 removes the exception AND recovers LV better (sol_rmse 0.04 vs the fragile 1e-4).
-function ExactGPField(kernel::Kernel, Z; d::Int=1, mean=AbstractGPs.ZeroMean(),
-                      logℓ0=0.0, logσ0=0.0, logσ_obs0=log(0.1), lognoise=log(1e-2))
+function ExactGPField(
+        kernel::Kernel, Z; d::Int = 1, mean = AbstractGPs.ZeroMean(),
+        logℓ0 = 0.0, logσ0 = 0.0, logσ_obs0 = log(0.1), lognoise = log(1.0e-2)
+    )
     n = length(Z)
-    v0 = vcat(logℓ0, logσ0, logσ_obs0, zeros(n*d))   # lognoise NOT trained; logσ_obs IS trained (data-term only)
-    ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
+    v0 = vcat(logℓ0, logσ0, logσ_obs0, zeros(n * d))   # lognoise NOT trained; logσ_obs IS trained (data-term only)
+    return ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
 end
 
 """Output-scaled squared-exponential kernel: `exp(2logσ) * SE(exp(logℓ))`."""
@@ -140,9 +148,9 @@ _lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
 # Layout accessors — trained vector is [logℓ, logσ, logσ_obs, vec(w)]; lognoise lives on the field.
 nw(L::FieldLayout) = L.n * L.d
 # hyp exposes ALL three hyper slots; logσ_obs is consumed only by the data term (not the solve pf).
-hyp(L::FieldLayout, v) = (logℓ=v[1], logσ=v[2], logσ_obs=v[3])
+hyp(L::FieldLayout, v) = (logℓ = v[1], logσ = v[2], logσ_obs = v[3])
 # w-block lives AFTER the hyper prefix: indices NHYP+1 .. NHYP+nw.
-wmat(L::FieldLayout, v) = reshape(v[NHYP+1 : NHYP+nw(L)], L.n, L.d)
+wmat(L::FieldLayout, v) = reshape(v[(NHYP + 1):(NHYP + nw(L))], L.n, L.d)
 
 # --- GPField protocol: ExactGPField (layout [logℓ, logσ, vec(w)]; lognoise fixed on field) ---
 
@@ -154,7 +162,7 @@ Flat trained vector → named params. `w` is an `n×d` matrix of anchor weights.
 function unpack(field::ExactGPField, v)
     L = FieldLayout(field.n, field.d)
     h = hyp(L, v)
-    (logℓ=h.logℓ, logσ=h.logσ, logσ_obs=h.logσ_obs, w=wmat(L, v))
+    return (logℓ = h.logℓ, logσ = h.logσ, logσ_obs = h.logσ_obs, w = wmat(L, v))
 end
 
 """
@@ -163,9 +171,9 @@ end
 Hyperparameter priors: a logℓ Gaussian (breaks the ℓ–σ ridge) plus a weak logσ Gaussian.
 Pure — no solver. Evaluated once per loss call.
 """
-function regularizer(field::ExactGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, λσ=1.0, sσ=1.0, _kw...)
+function regularizer(field::ExactGPField, v; λ = 1.0, logℓ_ref = 0.0, s = 0.5, λσ = 1.0, sσ = 1.0, _kw...)
     p = unpack(field, v)
-    λ*(p.logℓ - logℓ_ref)^2/(2s^2) + λσ*p.logσ^2/(2sσ^2)
+    return λ * (p.logℓ - logℓ_ref)^2 / (2s^2) + λσ * p.logσ^2 / (2sσ^2)
 end
 
 """
@@ -179,7 +187,7 @@ function solve_alpha(field::ExactGPField, logℓ, logσ, lognoise, w)
     # RELATIVE jitter exp(lognoise)·σ² (σ²=exp(2logσ) is the kernel diagonal). Scaling with σ² bounds
     # cond(K_ZZ) ≈ 1 + n/exp(lognoise) regardless of how far logσ/logℓ drift — an ABSOLUTE jitter goes
     # negligible once logσ grows, and the Mooncake Cholesky-solve BACKWARD then throws SingularException.
-    K = kernelmatrix(k, field.Z) + exp(lognoise + 2*logσ) * I
+    K = kernelmatrix(k, field.Z) + exp(lognoise + 2 * logσ) * I
     return _chol(K) \ w
 end
 
@@ -190,9 +198,9 @@ Forward field callable. `pf = [logℓ, logσ, vec(α)...]`; `Z` is fixed (closed
 Returns `kuZ' * α` as a length-`d` vector.
 """
 function gpfield(field::ExactGPField, u, pf)
-    k   = _kernel(pf[1], pf[2])
+    k = _kernel(pf[1], pf[2])
     kuZ = [k(u, z) for z in field.Z]
-    α   = reshape(@view(pf[3:end]), field.n, field.d)
+    α = reshape(@view(pf[3:end]), field.n, field.d)
     return vec(kuZ' * α)
 end
 
@@ -211,14 +219,16 @@ Initial flat params:  `v0 = [logℓ0, logσ0, logσ_obs0, vec(Z)(D·M), vec(μ)(
 observation-noise log-std used by the Gaussian NLL data term (NOT the kzz conditioning jitter).
 `jitter` is a RELATIVE factor (σ²-scaled, not absolute) — default 1e-4 matches `L_ZZ_factor`.
 """
-function SVGPField(kernel::Kernel, Z0::AbstractVector; dout::Int=1, mean=AbstractGPs.ZeroMean(),
-                   logℓ0=0.0, logσ0=0.0, logσ_obs0=log(0.1), jitter=1e-4)
+function SVGPField(
+        kernel::Kernel, Z0::AbstractVector; dout::Int = 1, mean = AbstractGPs.ZeroMean(),
+        logℓ0 = 0.0, logσ0 = 0.0, logσ_obs0 = log(0.1), jitter = 1.0e-4
+    )
     M = length(Z0); D = length(first(Z0))
-    μ0  = zeros(M*dout)
+    μ0 = zeros(M * dout)
     # diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0; off-diag raw=0 as well
-    Ls0 = reduce(vcat, [vcat(zeros(M), zeros(nLS(M)-M)) for _ in 1:dout])
-    v0  = vcat(logℓ0, logσ0, logσ_obs0, reduce(vcat, Z0), μ0, Ls0)
-    SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
+    Ls0 = reduce(vcat, [vcat(zeros(M), zeros(nLS(M) - M)) for _ in 1:dout])
+    v0 = vcat(logℓ0, logσ0, logσ_obs0, reduce(vcat, Z0), μ0, Ls0)
+    return SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
 end
 
 # Layout helpers — flat vector is [logℓ, logσ, logσ_obs, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
@@ -231,15 +241,15 @@ end
 # below are themselves the SVGP-layout source of truth (each block offset is computed from NHYP).
 
 "Extract inducing locations as a D×M matrix from flat param vector `v`."
-svgp_Z(f::SVGPField, v) = reshape(v[NHYP+1 : NHYP+f.D*f.M], f.D, f.M)
+svgp_Z(f::SVGPField, v) = reshape(v[(NHYP + 1):(NHYP + f.D * f.M)], f.D, f.M)
 
 "Extract variational mean as an M×dout matrix from flat param vector `v`."
-svgp_μ(f::SVGPField, v) = reshape(v[NHYP+f.D*f.M+1 : NHYP+f.D*f.M+f.M*f.dout], f.M, f.dout)
+svgp_μ(f::SVGPField, v) = reshape(v[(NHYP + f.D * f.M + 1):(NHYP + f.D * f.M + f.M * f.dout)], f.M, f.dout)
 
 "Extract raw L_S flat vector for output `i` from flat param vector `v`."
 function svgp_Lsblk(f::SVGPField, v, i)
-    o = NHYP + f.D*f.M + f.M*f.dout
-    v[o+(i-1)*nLS(f.M)+1 : o+i*nLS(f.M)]
+    o = NHYP + f.D * f.M + f.M * f.dout
+    return v[(o + (i - 1) * nLS(f.M) + 1):(o + i * nLS(f.M))]
 end
 
 # --- GPField protocol: SVGPField (layout [logℓ, logσ, vec(Z), vec(μ), vec(L_S)]; jitter fixed) ---
@@ -251,8 +261,10 @@ Flat trained vector → named params. `Z` is `D×M`, `μ` is `M×dout`,
 `Ls` is a `Vector` of `dout` `LowerTriangular` variational Cholesky factors.
 """
 function unpack(field::SVGPField, v)
-    (logℓ=v[1], logσ=v[2], logσ_obs=v[3], Z=svgp_Z(field, v), μ=svgp_μ(field, v),
-     Ls=[unpack_LS(svgp_Lsblk(field, v, i), field.M) for i in 1:field.dout])
+    return (
+        logℓ = v[1], logσ = v[2], logσ_obs = v[3], Z = svgp_Z(field, v), μ = svgp_μ(field, v),
+        Ls = [unpack_LS(svgp_Lsblk(field, v, i), field.M) for i in 1:field.dout],
+    )
 end
 
 """
@@ -265,10 +277,10 @@ The logσ prior (`λσ·logσ²/(2sσ²)`) mirrors `ExactGPField`'s regularizer,
 σ-collapse (logσ→−∞, σ²→0) during long ADAM runs on noisy data. Without it, the SVGP
 can drive the kernel signal to zero, killing the GP contribution entirely.
 """
-function regularizer(field::SVGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, λσ=1.0, sσ=1.0, _kw...)
+function regularizer(field::SVGPField, v; λ = 1.0, logℓ_ref = 0.0, s = 0.5, λσ = 1.0, sσ = 1.0, _kw...)
     p = unpack(field, v)
-    kl = sum(svgp_kl(p.μ[:,i], p.Ls[i]) for i in 1:field.dout)
-    kl + λ*(p.logℓ - logℓ_ref)^2/(2s^2) + λσ*p.logσ^2/(2sσ^2)
+    kl = sum(svgp_kl(p.μ[:, i], p.Ls[i]) for i in 1:field.dout)
+    return kl + λ * (p.logℓ - logℓ_ref)^2 / (2s^2) + λσ * p.logσ^2 / (2sσ^2)
 end
 
 # ---------------------------------------------------------------------------
@@ -281,7 +293,7 @@ end
 Number of free parameters in a lower-triangular M×M matrix (the variational
 factor `L_S` stored in flat form).
 """
-nLS(M) = (M*(M+1)) ÷ 2
+nLS(M) = (M * (M + 1)) ÷ 2
 
 """
     unpack_LS(raw, M) -> LowerTriangular
@@ -308,7 +320,7 @@ Whitened collapsed KL divergence KL[q(v) ‖ p(v)] where `q(v) = N(μ, S_L S_L')
 
     KL = 0.5 * (‖S_L‖²_F + ‖μ‖² - M - 2 Σ log diag(S_L))
 """
-svgp_kl(μ, S_L) = (M = length(μ); 0.5*(sum(abs2, S_L) + dot(μ, μ) - M - 2*sum(log, diag(S_L))))
+svgp_kl(μ, S_L) = (M = length(μ); 0.5 * (sum(abs2, S_L) + dot(μ, μ) - M - 2 * sum(log, diag(S_L))))
 
 """
     L_ZZ_factor(prior, Z; jitter=1e-4) -> LowerTriangular
@@ -323,9 +335,9 @@ Stage 1's ExactGP training (fixed there by `exp(lognoise + 2*logσ)`).
 
 Default `jitter=1e-4` is a relative factor (not absolute).
 """
-function L_ZZ_factor(prior, Z; jitter=1e-4)
+function L_ZZ_factor(prior, Z; jitter = 1.0e-4)
     K = AbstractGPs.cov(prior, Z)
-    s2 = sum(i -> K[i,i], 1:size(K,1)) / size(K,1)   # ≈ σ² (mean diagonal)
+    s2 = sum(i -> K[i, i], 1:size(K, 1)) / size(K, 1)   # ≈ σ² (mean diagonal)
     return _chol(K + (jitter * s2) * I).L
 end
 
@@ -339,10 +351,10 @@ Whitened predictive mean and variance at a single point `u`.
     σ²    = k(u,u) - A'A + ‖L_S' A‖²   # posterior variance with variational correction
 """
 function svgp_moments(prior, Z, L_ZZ, α, L_S, u)
-    kZu  = vec(AbstractGPs.cov(prior, Z, [u]))
-    A    = L_ZZ \ kZu
+    kZu = vec(AbstractGPs.cov(prior, Z, [u]))
+    A = L_ZZ \ kZu
     μ_star = only(AbstractGPs.mean(prior, [u])) + dot(kZu, α)
-    σ2   = only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A)
+    σ2 = only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A)
     return μ_star, σ2
 end
 
@@ -356,9 +368,9 @@ end
 Convenience constructor from variational parameters `μ` (whitened mean) and `L_S`
 (lower-triangular variational Cholesky). Computes and caches `L_ZZ` and `α = L_ZZ' \\ μ`.
 """
-function SparseGP(prior, Z, μ::AbstractVector, L_S; jitter=1e-4)
+function SparseGP(prior, Z, μ::AbstractVector, L_S; jitter = 1.0e-4)
     L_ZZ = L_ZZ_factor(prior, Z; jitter)
-    SparseGP(prior, Z, L_ZZ' \ μ, L_ZZ, L_S)
+    return SparseGP(prior, Z, L_ZZ' \ μ, L_ZZ, L_S)
 end
 
 """Posterior mean at a single input `u` (scalar)."""
@@ -383,7 +395,7 @@ variational correction from `L_S`.
 function Statistics.cov(g::SparseGP, xs::AbstractVector, ys::AbstractVector)
     Ax = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, xs)   # M × |xs|
     Ay = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, ys)   # M × |ys|
-    AbstractGPs.cov(g.prior, xs, ys) .- Ax'Ay .+ (g.L_S'Ax)' * (g.L_S'Ay)
+    return AbstractGPs.cov(g.prior, xs, ys) .- Ax'Ay .+ (g.L_S'Ax)' * (g.L_S'Ay)
 end
 
 """Posterior covariance matrix within `xs` (symmetric)."""
@@ -408,7 +420,7 @@ of the function values at `Z`).
 
 Callable: `(s::DecoupledGPSample)(x::AbstractVector) -> Float64`.
 """
-struct DecoupledGPSample{TZ,Tk}
+struct DecoupledGPSample{TZ, Tk}
     w::Vector{Float64}; ω::Matrix{Float64}; b::Vector{Float64}; D::Int
     v::Vector{Float64}; Z::TZ; kernel::Tk
 end
@@ -418,7 +430,7 @@ end
 
 Random Fourier features: `√(2/D) .* cos.(ω' * x .+ b)`.
 """
-_rff_features(x, ω, b, D) = sqrt(2/D) .* cos.(ω' * x .+ b)
+_rff_features(x, ω, b, D) = sqrt(2 / D) .* cos.(ω' * x .+ b)
 
 """
     build_decoupled_sample(kernel, Z, u; ℓ, σ, D, jitter, rng) -> DecoupledGPSample
@@ -432,15 +444,17 @@ Build one pathwise sample from the GP posterior at inducing points `Z` with obse
 - `jitter`: diagonal jitter on `K(Z,Z)` for numerical stability (default 1e-6)
 - `rng`: random number generator
 """
-function build_decoupled_sample(kernel, Z, u; ℓ::Real, σ::Real=1.0, D::Int=512, jitter=1e-6,
-                                rng=Random.default_rng())
+function build_decoupled_sample(
+        kernel, Z, u; ℓ::Real, σ::Real = 1.0, D::Int = 512, jitter = 1.0e-6,
+        rng = Random.default_rng()
+    )
     din = length(first(Z))
     ω = randn(rng, din, D) ./ ℓ                  # SE spectral density N(0, I/ℓ²)
     b = rand(rng, D) .* (2π)
     w = (σ .* randn(rng, D))                      # output-scale enters the RFF prior amplitude
     Φw = [dot(w, _rff_features(z, ω, b, D)) for z in Z]
-    K  = kernelmatrix(kernel, Z) + jitter*I
-    v  = _chol(K) \ (u .- Φw)
+    K = kernelmatrix(kernel, Z) + jitter * I
+    v = _chol(K) \ (u .- Φw)
     return DecoupledGPSample(w, ω, b, D, v, collect(Z), kernel)
 end
 
@@ -451,7 +465,7 @@ Evaluate the decoupled GP sample at input `x`:
     prior RFF value + inducing-point update correction.
 """
 function (s::DecoupledGPSample)(x::AbstractVector)
-    prior_x  = dot(s.w, _rff_features(x, s.ω, s.b, s.D))
+    prior_x = dot(s.w, _rff_features(x, s.ω, s.b, s.D))
     update_x = dot([s.kernel(x, z) for z in s.Z], s.v)
     return prior_x + update_x
 end
@@ -464,7 +478,7 @@ end
 Tiny pure-Julia Lloyd's k-means on COLUMNS of `X` (each column = one d-dim state).
 Returns `k` cluster centres as `Vector{Vector{Float64}}`.
 """
-function kmeans_anchors(X::AbstractMatrix, k::Int; iters::Int=50, rng=Random.default_rng())
+function kmeans_anchors(X::AbstractMatrix, k::Int; iters::Int = 50, rng = Random.default_rng())
     d, N = size(X); @assert k <= N
     C = [Vector{Float64}(X[:, j]) for j in randperm(rng, N)[1:k]]
     assign = zeros(Int, N)
@@ -473,14 +487,16 @@ function kmeans_anchors(X::AbstractMatrix, k::Int; iters::Int=50, rng=Random.def
             best, bd = 1, Inf
             for c in 1:k
                 dist = 0.0
-                @inbounds for r in 1:d; dist += (X[r, i] - C[c][r])^2; end
+                @inbounds for r in 1:d
+                    dist += (X[r, i] - C[c][r])^2
+                end
                 dist < bd && (bd = dist; best = c)
             end
             assign[i] = best
         end
         for c in 1:k
             m = findall(==(c), assign); isempty(m) && continue
-            C[c] = vec(sum(@view(X[:, m]); dims=2)) ./ length(m)
+            C[c] = vec(sum(@view(X[:, m]); dims = 2)) ./ length(m)
         end
     end
     return C

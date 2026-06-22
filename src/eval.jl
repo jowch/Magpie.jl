@@ -30,17 +30,17 @@ Rationale for χ²/Mahalanobis over per-dimension marginal boxes:
 `Σs`          — `AbstractVector` of `d×d` matrices (full posterior covariances).
 """
 function coverage(
-    truth::AbstractVector,
-    μs::AbstractVector,
-    Σs::AbstractVector;
-    level::Real = 0.9,
-)
+        truth::AbstractVector,
+        μs::AbstractVector,
+        Σs::AbstractVector;
+        level::Real = 0.9,
+    )
     n = length(truth)
     @assert length(μs) == n && length(Σs) == n "truth, μs, Σs must have the same length"
-    d       = length(first(truth))
-    χ²_thr  = chisqinvcdf(d, level)     # χ²_{d, level} threshold
+    d = length(first(truth))
+    χ²_thr = chisqinvcdf(d, level)     # χ²_{d, level} threshold
 
-    hits    = 0
+    hits = 0
     counted = 0
     for i in 1:n
         Σ = Σs[i]
@@ -75,7 +75,7 @@ Returns `(median=…, q90=…)` as a `NamedTuple`.
 """
 function field_error(gps, truefield, pts::AbstractVector)
     errs = map(pts) do z
-        pred  = [predmean(g, z) for g in gps]
+        pred = [predmean(g, z) for g in gps]
         true_ = truefield(z)
         norm(pred .- true_)
     end
@@ -108,7 +108,7 @@ Combine trajectory RMSE and field errors into one NamedTuple.  Pure — no solve
 
 Caller must pre-integrate the trajectory (no solver is built here).
 """
-function recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts=nothing)
+function recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts = nothing)
     # Trajectory RMSE — pure, caller supplies both trajectories
     traj_rmse = sqrt(mean(sum(abs2, p .- t) for (p, t) in zip(traj_pred, traj_truth)))
 
@@ -119,12 +119,12 @@ function recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts=nothing)
     fe_off = if offpts !== nothing
         field_error(gps, truefield, offpts)
     else
-        (median=NaN, q90=NaN)
+        (median = NaN, q90 = NaN)
     end
 
     return (
-        traj_rmse             = traj_rmse,
-        field_err_visited     = fe_vis,
+        traj_rmse = traj_rmse,
+        field_err_visited = fe_vis,
         field_err_offmanifold = fe_off,
     )
 end
@@ -153,11 +153,11 @@ that a minimum is well-localised.
 `Matrix` of size `(length(xs), length(ys))` where entry `[a, b]` is
 `loss(v_with_idx[1]=xs[a], v_with_idx[2]=ys[b])`.
 """
-function ridge_slice(loss, v::AbstractVector; idx::Tuple{Int,Int}=(1,2), grid)
+function ridge_slice(loss, v::AbstractVector; idx::Tuple{Int, Int} = (1, 2), grid)
     xs, ys = grid
     nx, ny = length(xs), length(ys)
-    out    = Matrix{Float64}(undef, nx, ny)
-    w      = copy(v)        # copy so v is never mutated
+    out = Matrix{Float64}(undef, nx, ny)
+    w = copy(v)        # copy so v is never mutated
     i1, i2 = idx
     for (a, x) in enumerate(xs)
         w[i1] = x

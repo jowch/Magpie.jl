@@ -38,31 +38,35 @@ Random.seed!(1)
 # ## True system
 
 function lv!(du, u, p, t)
-    du[1] = 1.5u[1] - u[1]*u[2]
-    du[2] = u[1]*u[2] - 3u[2]
-    nothing
+    du[1] = 1.5u[1] - u[1] * u[2]
+    du[2] = u[1] * u[2] - 3u[2]
+    return nothing
 end
 
-lv_true(u) = [1.5u[1] - u[1]*u[2], u[1]*u[2] - 3u[2]]
+lv_true(u) = [1.5u[1] - u[1] * u[2], u[1] * u[2] - 3u[2]]
 
 tspan = (0.0, 3.0)
-ts    = collect(range(tspan...; length=15))
+ts = collect(range(tspan...; length = 15))
 
 # ## Training data — noisy observations from 12 varied ICs
 
 # 12 ICs from a 2-D region of state space, same seed as the original example.
 rng_ic = MersenneTwister(1)
-ICs = [[0.6 + 1.4*rand(rng_ic), 0.4 + 1.2*rand(rng_ic)] for _ in 1:12]
+ICs = [[0.6 + 1.4 * rand(rng_ic), 0.4 + 1.2 * rand(rng_ic)] for _ in 1:12]
 
 # Add observation noise: σ_obs ≈ 0.03. The SVGP must learn through noise.
 # Note: use low noise to keep the SVGP training stable (through-solver gradient via Mooncake
 # can hit numerical issues when the noise is large enough to push logσ to extreme values
 # during ADAM). σ=0.03 matches the noise level used in the LV exact example.
 σ_obs_true = 0.03f0
-rng_noise  = MersenneTwister(42)
-trajs = [(ts, Array(solve(ODEProblem(lv!, ic, tspan), Tsit5(); saveat=ts)) .+
-              σ_obs_true .* randn(rng_noise, 2, length(ts)))
-         for ic in ICs]
+rng_noise = MersenneTwister(42)
+trajs = [
+    (
+            ts, Array(solve(ODEProblem(lv!, ic, tspan), Tsit5(); saveat = ts)) .+
+            σ_obs_true .* randn(rng_noise, 2, length(ts)),
+        )
+        for ic in ICs
+]
 
 # Pool ALL training states for anchor initialisation and on-support field_error.
 allstates = reduce(hcat, last.(trajs))   # 2 × (12·15) pooled states
@@ -79,17 +83,17 @@ allstates = reduce(hcat, last.(trajs))   # 2 × (12·15) pooled states
 #   Pkg.develop(path="."); Pkg.add(["OrdinaryDiffEq","SciMLSensitivity"]); \
 #   include("bench/timing_exact_vs_svgp.jl")'`
 
-Z = kmeans_anchors(allstates, 24; rng=MersenneTwister(2))
+Z = kmeans_anchors(allstates, 24; rng = MersenneTwister(2))
 # logℓ0=log(0.5): lengthscale ~0.5 (reasonable for state-space coords in [0.5, 2.5]).
 # logσ0=log(0.5): signal std ~0.5 (modest init; avoids ADAM driving logσ to -∞ during
 # the first steps, which causes exp(2logσ)→0 and hits KernelFunctions' σ²>0 constraint).
-field = SVGPField(SqExponentialKernel(), Z; dout=2, logℓ0=log(0.5), logσ0=log(0.5))
+field = SVGPField(SqExponentialKernel(), Z; dout = 2, logℓ0 = log(0.5), logσ0 = log(0.5))
 
 # `train!(field, trajectories)` — multi-trajectory ELBO optimisation (ADAM → LBFGS).
 # `λ=1/(15*2*length(trajs))` normalises the logℓ prior by total observations.
 # adam_lr=0.01: lower than the default 0.05 — SVGP has many trainable params (Z is trainable)
 # and a conservative step size prevents the optimizer from exploring σ²→0 pathologies.
-field, vopt = train!(field, trajs; tspan, maxiters=300, λ=1/(15*2*length(trajs)), adam_lr=0.01)
+field, vopt = train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * length(trajs)), adam_lr = 0.01)
 
 # ## Posterior SparseGPs — field recovery check
 #
@@ -108,20 +112,20 @@ field, vopt = train!(field, trajs; tspan, maxiters=300, λ=1/(15*2*length(trajs)
 sgps = posterior_sparsegps(field, vopt)
 
 # On-support test points: subsample from pooled training states (every 5th column).
-on_pts  = [allstates[:, j] for j in 1:5:size(allstates, 2)]
+on_pts = [allstates[:, j] for j in 1:5:size(allstates, 2)]
 
 # Off-manifold test grid: 10×10 well OUTSIDE the training trajectories' state-space support.
 # The training ICs span prey ∈ [0.6, 2.0], pred ∈ [0.4, 1.6] roughly.
 # We sample far outside that band: prey ∈ [3.0, 5.0], pred ∈ [3.0, 5.0].
-prey_offgrid = range(3.0, 5.0; length=10)
-pred_offgrid = range(3.0, 5.0; length=10)
+prey_offgrid = range(3.0, 5.0; length = 10)
+pred_offgrid = range(3.0, 5.0; length = 10)
 off_pts = vec([[p1, p2] for p1 in prey_offgrid, p2 in pred_offgrid])
 
-ferr_on  = field_error(sgps, lv_true, on_pts)
+ferr_on = field_error(sgps, lv_true, on_pts)
 ferr_off = field_error(sgps, lv_true, off_pts)
 
-@info "Field recovery ON-support (training manifold)"   median=ferr_on.median  q90=ferr_on.q90
-@info "Field recovery OFF-manifold (outside training support)" median=ferr_off.median q90=ferr_off.q90
+@info "Field recovery ON-support (training manifold)"   median = ferr_on.median  q90 = ferr_on.q90
+@info "Field recovery OFF-manifold (outside training support)" median = ferr_off.median q90 = ferr_off.q90
 
 # ## Trajectory RMSE — ODE integration of the GP mean field
 #
@@ -130,20 +134,20 @@ ferr_off = field_error(sgps, lv_true, off_pts)
 
 gp_rhs!(du, u, p, t) = (du .= [predmean(sgps[i], u) for i in 1:2]; nothing)
 ic0_clean = ICs[1]
-sol_gp = Array(solve(ODEProblem(gp_rhs!, ic0_clean, tspan), Tsit5(); saveat=ts))
+sol_gp = Array(solve(ODEProblem(gp_rhs!, ic0_clean, tspan), Tsit5(); saveat = ts))
 
 # Clean truth for the first IC.
-clean1 = Array(solve(ODEProblem(lv!, ic0_clean, tspan), Tsit5(); saveat=ts))
+clean1 = Array(solve(ODEProblem(lv!, ic0_clean, tspan), Tsit5(); saveat = ts))
 traj_rmse = sqrt(mean(sum(abs2, sol_gp[:, k] .- clean1[:, k]) for k in 1:length(ts)))
 @info "Trajectory RMSE (ODE integration of GP mean vs clean truth)" traj_rmse
 
 # ## Plot: mean trajectory vs clean truth
-p1 = plot(ts, clean1[1,:], label="prey (clean)", lw=2, c=:blue)
-plot!(p1, ts, clean1[2,:], label="pred (clean)", lw=2, c=:red)
-plot!(p1, ts, last(trajs[1])[1,:], label="prey (noisy data)", lw=1, c=:blue, ls=:dot, alpha=0.6)
-plot!(p1, ts, last(trajs[1])[2,:], label="pred (noisy data)", lw=1, c=:red,  ls=:dot, alpha=0.6)
-plot!(p1, ts, sol_gp[1,:], label="prey (GP ODE mean)", lw=2, c=:blue, ls=:dash)
-plot!(p1, ts, sol_gp[2,:], label="pred (GP ODE mean)", lw=2, c=:red,  ls=:dash)
+p1 = plot(ts, clean1[1, :], label = "prey (clean)", lw = 2, c = :blue)
+plot!(p1, ts, clean1[2, :], label = "pred (clean)", lw = 2, c = :red)
+plot!(p1, ts, last(trajs[1])[1, :], label = "prey (noisy data)", lw = 1, c = :blue, ls = :dot, alpha = 0.6)
+plot!(p1, ts, last(trajs[1])[2, :], label = "pred (noisy data)", lw = 1, c = :red, ls = :dot, alpha = 0.6)
+plot!(p1, ts, sol_gp[1, :], label = "prey (GP ODE mean)", lw = 2, c = :blue, ls = :dash)
+plot!(p1, ts, sol_gp[2, :], label = "pred (GP ODE mean)", lw = 2, c = :red, ls = :dash)
 xlabel!(p1, "t"); ylabel!(p1, "population")
 title!(p1, "LV scale-forcing: SVGP mean trajectory (12 noisy trajs)")
 savefig(p1, "sf_trajectory.png")
@@ -155,28 +159,28 @@ savefig(p1, "sf_trajectory.png")
 u0_test = [1.1, 0.9]
 
 # Clean held-out ground truth.
-target_test = Array(solve(ODEProblem(lv!, u0_test, tspan), Tsit5(); saveat=ts))
-truth_vecs  = [target_test[:, i] for i in 1:length(ts)]
+target_test = Array(solve(ODEProblem(lv!, u0_test, tspan), Tsit5(); saveat = ts))
+truth_vecs = [target_test[:, i] for i in 1:length(ts)]
 
 # ### PULL — cheap analytic propagation (Euler-limited on nonlinear horizons)
 #
 # PULL's mean is a first-order Euler recurrence; on the LV limit cycle it drifts
 # from the true trajectory, so coverage collapses to ~0. Kept as a documented
 # contrast, NOT as the validated-uncertainty story.
-μs_pull, Σs_pull = propagate(sgps, u0_test, tspan; method=PULL(), ts=ts)
-cov90_pull = coverage(truth_vecs, μs_pull, Σs_pull; level=0.9)
+μs_pull, Σs_pull = propagate(sgps, u0_test, tspan; method = PULL(), ts = ts)
+cov90_pull = coverage(truth_vecs, μs_pull, Σs_pull; level = 0.9)
 @info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
 
 # ### Pathwise — Monte-Carlo ensemble of decoupled GP samples (validated uncertainty)
 #
 # Each of `n` SVGP samples is drawn from the whitened variational posterior and
 # integrated as a proper ODE (no Euler drift). This is the real uncertainty story.
-ens = propagate(sgps, u0_test, tspan; method=Pathwise(n=128), ts=ts)
+ens = propagate(sgps, u0_test, tspan; method = Pathwise(n = 128), ts = ts)
 
-nsteps    = length(ts)
-μs_path   = [vec(mean(ens[:, :, k]; dims=1)) for k in 1:nsteps]
-Σs_path   = [cov(ens[:, :, k]) for k in 1:nsteps]
-cov90_path = coverage(truth_vecs, μs_path, Σs_path; level=0.9)
+nsteps = length(ts)
+μs_path = [vec(mean(ens[:, :, k]; dims = 1)) for k in 1:nsteps]
+Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]
+cov90_path = coverage(truth_vecs, μs_path, Σs_path; level = 0.9)
 @info "Held-out-IC Pathwise coverage at 90% nominal (validated)" cov90_path
 
 # ## Plot: Pathwise ensemble band over the clean held-out trajectory
@@ -186,12 +190,12 @@ pred_lo = [quantile(ens[:, 2, k], 0.05) for k in 1:nsteps]
 pred_hi = [quantile(ens[:, 2, k], 0.95) for k in 1:nsteps]
 μmat_path = reduce(hcat, μs_path)
 
-p2 = plot(ts, target_test[1,:], label="prey (clean, held-out IC)", lw=2, c=:blue)
-plot!(p2, ts, target_test[2,:], label="pred (clean, held-out IC)", lw=2, c=:red)
-plot!(p2, ts, μmat_path[1,:], label="prey μ (Pathwise)", lw=2, c=:blue, ls=:dash)
-plot!(p2, ts, μmat_path[2,:], label="pred μ (Pathwise)", lw=2, c=:red,  ls=:dash)
-plot!(p2, ts, prey_hi, fillrange=prey_lo, alpha=0.15, c=:blue, label="prey 5–95%", lw=0)
-plot!(p2, ts, pred_hi, fillrange=pred_lo, alpha=0.15, c=:red,  label="pred 5–95%", lw=0)
+p2 = plot(ts, target_test[1, :], label = "prey (clean, held-out IC)", lw = 2, c = :blue)
+plot!(p2, ts, target_test[2, :], label = "pred (clean, held-out IC)", lw = 2, c = :red)
+plot!(p2, ts, μmat_path[1, :], label = "prey μ (Pathwise)", lw = 2, c = :blue, ls = :dash)
+plot!(p2, ts, μmat_path[2, :], label = "pred μ (Pathwise)", lw = 2, c = :red, ls = :dash)
+plot!(p2, ts, prey_hi, fillrange = prey_lo, alpha = 0.15, c = :blue, label = "prey 5–95%", lw = 0)
+plot!(p2, ts, pred_hi, fillrange = pred_lo, alpha = 0.15, c = :red, label = "pred 5–95%", lw = 0)
 xlabel!(p2, "t"); ylabel!(p2, "population")
 title!(p2, "LV scale-forcing: held-out-IC Pathwise band (90%)")
 savefig(p2, "sf_pathwise.png")
@@ -224,15 +228,15 @@ using Test  #src
 
 # Off-manifold field error is REPORTED, not asserted: expected larger than on-support.
 # This is the honest contrast — SVGP does not generalise beyond its training support.
-@info "OFF-manifold field error (outside training support, expected larger)" median=ferr_off.median q90=ferr_off.q90  #src
+@info "OFF-manifold field error (outside training support, expected larger)" median = ferr_off.median q90 = ferr_off.q90  #src
 @test ferr_off.median > ferr_on.median   #src  sanity: off-manifold is worse (honest contrast)
 
 # PULL coverage: @info only — Euler drift documented.
-@info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits=3)) (Euler-limited; documented contrast)."  #src
+@info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits = 3)) (Euler-limited; documented contrast)."  #src
 
 # Pathwise coverage: assert if reasonable, else report honestly.
 if cov90_path >= 0.6   #src
     @test cov90_path >= 0.6   #src  Pathwise ensemble covers the held-out truth (validated uncertainty)
 else   #src
-    @info "Pathwise coverage below 0.6 ($(round(cov90_path; digits=3))). Coverage at threshold; check ensemble dispersion." cov90_path  #src
+    @info "Pathwise coverage below 0.6 ($(round(cov90_path; digits = 3))). Coverage at threshold; check ensemble dispersion." cov90_path  #src
 end   #src
