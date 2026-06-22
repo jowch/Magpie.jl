@@ -1,5 +1,5 @@
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Test
-using Magpie: ExactGPField, FieldLayout
+using Magpie: ExactGPField
 using OrdinaryDiffEq, SciMLSensitivity
 import DifferentiationInterface as DI
 import Mooncake
@@ -12,9 +12,8 @@ using FiniteDifferences
     u0 = [2.5]; tspan = (0.0, 4.0); ts = collect(range(tspan...; length = 10))
     target = Array(solve(ODEProblem((u, p, t) -> [truef(u[1])], u0, tspan), Tsit5(); saveat = ts))
     field = ExactGPField(SqExponentialKernel(), Z; d = 1)
-    L = FieldLayout(10, 1)
     v0 = vcat(log(1.3), 0.0, log(0.1), zeros(10))   # [logℓ, logσ, logσ_obs, vec(w)]; w=0 off-optimum so loss is non-flat in w
-    loss = ext.make_loss(field, L, u0, tspan, ts, target)
+    loss = ext.make_loss(field, u0, tspan, ts, target)
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
@@ -35,10 +34,9 @@ end
     u0 = [2.5]; tspan = (0.0, 4.0); ts = collect(range(tspan...; length = 10))
     target = Array(solve(ODEProblem((u, p, t) -> [truef(u[1])], u0, tspan), Tsit5(); saveat = ts))
     field = ExactGPField(SqExponentialKernel(), Z; d = 1)
-    L = FieldLayout(10, 1)
-    loss0 = ext.make_loss(field, L, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
+    loss0 = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
     field, vopt = Magpie.train!(field, (ts, target); tspan, adam_iters = 30, maxiters = 10)
-    lossT = ext.make_loss(field, L, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(vopt)
+    lossT = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(vopt)
     @info "B-smoke" loss0 lossT
     @test lossT < loss0                               # train! actually descended (optimizer-driver wiring works)
     gps = Magpie.posterior_gps(field, vopt)

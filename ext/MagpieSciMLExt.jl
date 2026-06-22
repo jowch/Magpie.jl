@@ -61,8 +61,11 @@ The `known` closure is called every RHS evaluation but carries no trained params
 function field_rhs(cf::Magpie.CompositeField, v)
     pf, _ = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf (inner closure unused — CompositeField rebuilds via gpfield)
     known = cf.known                         # do NOT closure-capture α or pf — only the fixed known fn
-    function rhs!(du, u, _pf, t; known_physics = (u, t) -> zero(u))
-        du .= known(u, t)                    # known physics first (baked in; ignores kwarg known_physics)
+    # `cf.known` is the authoritative known-physics source. The shared `f!` wrapper (in
+    # shooting_data_term) splats a `known_physics=` kwarg into every field's rhs!, so we
+    # accept-and-ignore it via `_kw...` rather than advertise a parameter we never read.
+    function rhs!(du, u, _pf, t; _kw...)
+        du .= known(u, t)                    # known physics first (baked into the closure)
         du .+= gpfield(cf.gp, u, _pf)       # GP residual (α threaded in _pf, R1)
         return nothing
     end
@@ -121,6 +124,13 @@ end
 # Returns ONLY the data fit (no regularizer — field_loss adds it once, outside the loop).
 # `data` is always a Vector{<:Tuple} of (ts, X); single-shooting = a 1-element vector.
 
+# Gaussian negative log-likelihood for a Gaussian observation model with log-std `logσ_obs`:
+#   NLL = SSE/(2σ²) + (Nd/2)·log(2π σ²),   σ² = exp(2·logσ_obs).
+# σ_obs is an observation-noise SCALE (identifiable, NOT a ratio): the normalizer makes the
+# loss strictly convex in logσ_obs, with minimizer at the residual RMS — argmin = ½·log(SSE/Nd).
+# Shared by both shooting strategies (the data-misfit term; penalties keep their own weights).
+_gaussian_nll(sse, Nd, logσ_obs) = (σ2 = exp(2 * logσ_obs); sse / (2σ2) + (Nd / 2) * log(2π * σ2))
+
 """
     shooting_data_term(field, ::SingleShooting, (pf, rhs!), data; logσ_obs, u0, tspan, ...) -> Real
 
@@ -137,7 +147,6 @@ function shooting_data_term(
     )
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
     T = eltype(pf)
-    σ2 = exp(2 * logσ_obs)
     sse = zero(T)
     Nd = 0
     for (ts, X) in data
@@ -145,12 +154,14 @@ function shooting_data_term(
         tsp = tspan === nothing ? (first(ts), last(ts)) : tspan
         sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat = ts, sensealg)
         A = Array(sol)                                  # R2: Array(sol), never sol[:,i]
-        size(A) == size(X) || return convert(T, 1.0e6)    # divergence guard → finite sentinel
+        # Divergence guard → finite sentinel (constant ⇒ zero gradient: "don't step here").
+        # Two failure modes: early termination (wrong shape) AND integration to a NaN/Inf
+        # state that still saves all `saveat` points (right shape, poisons the loss/gradient).
+        (size(A) == size(X) && all(isfinite, A)) || return convert(T, 1.0e6)
         sse += sum(abs2, A .- X)
         Nd += length(X)
     end
-    # Gaussian NLL: SSE/(2σ²) + (Nd/2)·log(2π σ²). σ_obs is scale-not-ratio (identifiable).
-    return sse / (2σ2) + (Nd / 2) * log(2π * σ2)
+    return _gaussian_nll(sse, Nd, logσ_obs)
 end
 
 """
@@ -172,7 +183,6 @@ function shooting_data_term(
     seg_idx = round.(Int, range(1, length(ts); length = S + 1))
     seg_t = [ts[i] for i in seg_idx]
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
-    σ2 = exp(2 * logσ_obs)
     dataerr = cont = zero(eltype(pf))
     Nd = 0
     for i in 1:S
@@ -181,33 +191,36 @@ function shooting_data_term(
             saveat = [seg_t[i + 1]], sensealg
         )
         endp = Array(sol)[:, end]                        # R2: Array(sol) before indexing
+        all(isfinite, endp) || return convert(eltype(pf), 1.0e6)   # divergence guard (matches SingleShooting)
         dataerr += sum(abs2, endp .- X[:, seg_idx[i + 1]])
         Nd += length(endp)
         i < S && (cont += sum(abs2, endp .- s0[:, i + 1]))
     end
-    # Gaussian NLL on the data-misfit term (matches SingleShooting); penalties keep their own weights.
-    return dataerr / (2σ2) + (Nd / 2) * log(2π * σ2) + ms.λ * cont + ms.λ0 * sum(abs2, s0[:, 1] .- X[:, 1])
+    # Data-misfit NLL (matches SingleShooting) + soft penalties (own weights, not likelihood).
+    return _gaussian_nll(dataerr, Nd, logσ_obs) + ms.λ * cont + ms.λ0 * sum(abs2, s0[:, 1] .- X[:, 1])
 end
 
 # ---------------------------------------------------------------------------
-# Signature-preserving WRAPPERS onto the skeleton (retire in Phase 6; 8 call sites depend
-# on them). They forward to field_loss, preserving exact argument order + reg conventions.
+# Internal loss builders over the `field_loss` skeleton. `build_loss` is the ExactGPField
+# loss dispatcher (single- vs multiple-shooting) driven by `train!`; `make_loss` is a thin
+# single-shooting convenience for the test/bench harness. Both preserve the regularizer
+# conventions — notably the MultipleShooting `λσ=0` default (logℓ-only prior).
 # ---------------------------------------------------------------------------
 
-# Stage-1 single-shooting loss. Old reg = λ·logℓ + λσ·logσ (ExactGPField regularizer default).
-make_loss(field::ExactGPField, L::FieldLayout, u0, tspan, ts, X; kw...) =
+# ExactGPField single-shooting loss convenience (test/bench harness). Reg = λ·logℓ + λσ·logσ.
+make_loss(field::ExactGPField, u0, tspan, ts, X; kw...) =
     field_loss(field, Magpie.SingleShooting(), [(collect(ts), X)]; u0 = u0, tspan = tspan, kw...)
 
-# build_loss: Stage-1 SingleShooting + Stage-2 MultipleShooting dispatch.
-# Arg order preserved: (field, L, u_data, t_data, tspan, shooting; kw...).
+# build_loss: ExactGPField loss, dispatched on the shooting strategy.
+# Signature: (field, L, u_data, t_data, tspan, shooting; kw...).
 function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw...)
     u0 = u_data isa AbstractMatrix ? collect(u_data[:, 1]) : [u_data[1]]
     return field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0 = u0, tspan = tspan, kw...)
 end
 
-# Stage-2 multiple shooting. The trained vector is [logℓ, logσ, logσ_obs, vec(w), vec(s0)] (s0 is d×S);
-# the loss extracts s0 from `v` then forwards to shooting_data_term. Old MS reg was logℓ-only
-# (no λσ term) — preserved by passing λσ=0.0 to the field regularizer. The s0 block starts AFTER the
+# Multiple-shooting loss. The trained vector is [logℓ, logσ, logσ_obs, vec(w), vec(s0)] (s0 is d×S);
+# the loss extracts s0 from `v` then forwards to shooting_data_term. The MS regularizer is logℓ-only
+# (no λσ term) — set by passing λσ=0.0 to the field regularizer. The s0 block starts AFTER the
 # hyper prefix + the w-block: offset NHYP + nwL (routed through Magpie.NHYP — no hardcoded 3).
 function build_loss(
         field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
@@ -301,7 +314,7 @@ end
 
 # ---------------------------------------------------------------------------
 # posterior: canonical solver-free reconstruction. posterior_gps/posterior_sparsegps
-# are thin aliases forwarding here (8 call sites + exports unchanged).
+# are public aliases forwarding here.
 # ---------------------------------------------------------------------------
 
 # NOTE: must be `Magpie.posterior` (qualified) to EXTEND the core stub; an unqualified
@@ -324,12 +337,12 @@ function Magpie.posterior(field::ExactGPField, v)
     return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
 end
 
-# Thin aliases forwarding to `posterior` (8 call sites + exports unchanged; retire in Phase 6).
+# Public aliases forwarding to `posterior` (exported back-compat names).
 Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior(field)
 Magpie.posterior_gps(field::ExactGPField, v) = Magpie.posterior(field, v)
 
 # ---------------------------------------------------------------------------
-# SVGPField: multi-output multi-trajectory ELBO loss (shared Z). Task 7b.
+# SVGPField: multi-output multi-trajectory ELBO loss (shared Z).
 # ---------------------------------------------------------------------------
 
 """
@@ -354,7 +367,7 @@ svgp_elbo_loss(field::SVGPField, trajectories; tspan, kw...) =
     field_loss(field, Magpie.SingleShooting(), trajectories; tspan = tspan, kw...)
 
 # ---------------------------------------------------------------------------
-# posterior(::SVGPField): reconstruct dout SparseGPs from trained params. Task 7b.
+# posterior(::SVGPField): reconstruct dout SparseGPs from trained params.
 # Relative jitter field.jitter·σ² matches the in-loss Cholesky so reconstructed α == trained α.
 # ---------------------------------------------------------------------------
 
@@ -377,7 +390,7 @@ function Magpie.posterior(field::SVGPField, v)
     ]
 end
 
-# Thin aliases forwarding to `posterior` (call sites + exports unchanged; retire in Phase 6).
+# Public aliases forwarding to `posterior` (exported back-compat names).
 Magpie.posterior_sparsegps(field::SVGPField) = Magpie.posterior(field)
 Magpie.posterior_sparsegps(field::SVGPField, v) = Magpie.posterior(field, v)
 
@@ -489,6 +502,68 @@ end
 
 using Random: MersenneTwister
 
+# ---------------------------------------------------------------------------
+# Shared Pathwise machinery. The three field families (ExactGP, SparseGP, CompositeField)
+# differ only in how a per-output decoupled sampler is built; the ensemble loop (alloc,
+# per-sample RHS, ODE solve, write) is identical. `_pathwise_integrate` owns that loop and
+# each family passes a `build_sampler`.
+#
+# RNG seeding: each (sample `sidx`, output `i`) gets TWO independent MersenneTwister streams
+# — one for the GP-value draw (inducing/whitened), one for the RFF prior phase — kept
+# decorrelated by a `+500_000` offset on one of them. The base multiplier (131 Exact/Composite,
+# 977 SVGP) just spreads streams across samples; the exact values are arbitrary but FIXED so
+# ensembles stay reproducible. Do NOT change these expressions — tests pin ensemble output.
+# ---------------------------------------------------------------------------
+
+# Per-output decoupled sampler from an ExactGP `g` (ExactGP + CompositeField fields).
+function _exact_pathwise_sampler(g, i, sidx)
+    k = g.prior.kernel                          # ScaledKernel (carries σ²)
+    ℓ = Magpie._lengthscale(k)                  # peel ScaledKernel → inner TransformedKernel
+    σ = sqrt(k(g.x[1], g.x[1]))                 # k(x,x) = σ² for stationary SE
+    # Consistent inducing-value draw from the posterior at the anchors.
+    uvals = Magpie.mean(g, g.x) .+
+        Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L * randn(MersenneTwister(sidx * 131 + i), length(g.x))
+    return Magpie.build_decoupled_sample(
+        k, g.x, uvals; ℓ = ℓ, σ = σ, rng = MersenneTwister(sidx * 131 + i + 500_000)
+    )
+end
+
+# Per-output decoupled sampler from a SparseGP `g`: draw whitened v_s ~ N(μ_i, S),
+# lift to inducing values u_s = L_ZZ v_s, then build the decoupled sampler.
+function _svgp_pathwise_sampler(g, i, sidx)
+    k = g.prior.kernel
+    ℓ = Magpie._lengthscale(k)
+    σ = sqrt(k(g.Z[1], g.Z[1]))
+    μ_i = g.L_ZZ' * g.α                         # recover variational mean from α = L_ZZ' \ μ_i
+    v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
+    u_s = g.L_ZZ * v_s
+    return Magpie.build_decoupled_sample(
+        k, g.Z, u_s; ℓ = ℓ, σ = σ, rng = MersenneTwister(sidx * 977 + i)
+    )
+end
+
+# Shared ensemble integrator. `build_sampler(g, i, sidx) -> callable`; `known(u,t)` is added
+# to every RHS evaluation (defaults to the zero field for non-composite cases, so the value
+# is identical to a known-free RHS). Returns an `N × d × length(ts)` array.
+function _pathwise_integrate(
+        gps, build_sampler, u0, tspan, ts, m::Magpie.Pathwise; known = (u, t) -> zero(u)
+    )
+    d = length(u0); S = m.n
+    out = zeros(S, d, length(ts))
+    for sidx in 1:S
+        samplers = [build_sampler(g, i, sidx) for (i, g) in enumerate(gps)]
+        function rhs!(du, u, p, t)
+            kphys = known(u, t)
+            for i in 1:d
+                du[i] = kphys[i] + samplers[i](u)
+            end
+            return nothing
+        end
+        out[sidx, :, :] = Array(solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts))
+    end
+    return out
+end
+
 # ---- ExactGP vector field -------------------------------------------------
 
 """
@@ -520,36 +595,8 @@ Magpie.propagate(field::ExactGPField, u0, tspan; kw...) =
     Magpie.propagate(Magpie.posterior_gps(field), u0, tspan; kw...)
 
 # Internal Pathwise integrator for ExactGP fields.
-function _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise)
-    d = length(u0); S = m.n
-    out = zeros(S, d, length(ts))
-    for sidx in 1:S
-        samplers = [
-            begin
-                    k = g.prior.kernel                                    # ScaledKernel (carries σ²)
-                    ℓ = Magpie._lengthscale(k)                            # peel ScaledKernel → inner TransformedKernel
-                    σ = sqrt(k(g.x[1], g.x[1]))                           # k(x,x) = σ² for stationary SE
-                    # Draw a consistent inducing-value sample from the posterior at the anchors.
-                    uvals = Magpie.mean(g, g.x) .+
-                    Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L *
-                    randn(MersenneTwister(sidx * 131 + i), length(g.x))
-                    Magpie.build_decoupled_sample(
-                        k, g.x, uvals;
-                        ℓ = ℓ, σ = σ,                       # decorrelate the RFF-phase RNG from the
-                        rng = MersenneTwister(sidx * 131 + i + 500_000)
-                    )  # inducing-draw RNG above
-                end for (i, g) in enumerate(gps)
-        ]
-        rhs!(du, u, p, t) = (
-            for i in 1:d
-                du[i] = samplers[i](u)
-            end; nothing
-        )
-        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts)
-        out[sidx, :, :] = Array(sol)
-    end
-    return out
-end
+_pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(gps, _exact_pathwise_sampler, u0, tspan, ts, m)
 
 # ---- SparseGP vector field -------------------------------------------------
 
@@ -579,38 +626,8 @@ Magpie.propagate(field::SVGPField, u0, tspan; kw...) =
     Magpie.propagate(Magpie.posterior_sparsegps(field), u0, tspan; kw...)
 
 # Internal Pathwise integrator for SparseGP fields.
-# Draws each sample by: (1) drawing whitened v_s ~ N(μ_i, S), (2) lifting to u_s = L_ZZ v_s,
-# (3) building a decoupled sampler from inducing locations Z and values u_s.
-function _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise)
-    d = length(u0); out = zeros(m.n, d, length(ts))
-    for sidx in 1:m.n
-        samplers = [
-            begin
-                    k = g.prior.kernel
-                    ℓ = Magpie._lengthscale(k)
-                    σ = sqrt(k(g.Z[1], g.Z[1]))
-                    # Recover variational mean μ_i from the stored α = L_ZZ' \ μ_i.
-                    μ_i = g.L_ZZ' * g.α
-                    # Draw whitened v_s ~ N(μ_i, S) where S = L_S L_S'.
-                    v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
-                    # Lift to inducing-value sample u_s = L_ZZ v_s.
-                    u_s = g.L_ZZ * v_s
-                    Magpie.build_decoupled_sample(
-                        k, g.Z, u_s;
-                        ℓ = ℓ, σ = σ,
-                        rng = MersenneTwister(sidx * 977 + i)
-                    )
-                end for (i, g) in enumerate(sgps)
-        ]
-        rhs!(du, u, p, t) = (
-            for i in 1:d
-                du[i] = samplers[i](u)
-            end; nothing
-        )
-        out[sidx, :, :] = Array(solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts))
-    end
-    return out
-end
+_pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(sgps, _svgp_pathwise_sampler, u0, tspan, ts, m)
 
 # ---- CompositeField propagation ----------------------------------------------
 # CompositeField = known_physics (fixed) + residual GP field.
@@ -650,48 +667,8 @@ function Magpie.propagate(
     return _pathwise_composite(gps, known, u0, tspan, ts, method)
 end
 
-"""
-    Magpie.propagate(cf::CompositeField, u0, tspan; method, ts, ...) -> ensemble
-
-Variant that reconstructs from `v` directly (for one-shot use without first calling `posterior`).
-"""
-Magpie.propagate(cf::Magpie.CompositeField, u0, tspan, v; kw...) =
-    Magpie.propagate(cf, u0, tspan; kw...)   # v0 is already stored in cf.gp.v0
-
-# Internal Pathwise integrator for CompositeField.
-# Each sample integrates `du = known(u,t) + sampler_i(u)` — full composite field.
-# Mirrors `_pathwise` but adds the known_physics term to each RHS evaluation.
-function _pathwise_composite(gps, known, u0, tspan, ts, m::Magpie.Pathwise)
-    d = length(u0); S = m.n
-    out = zeros(S, d, length(ts))
-    for sidx in 1:S
-        samplers = [
-            begin
-                    g = gps[i]
-                    k = g.prior.kernel
-                    ℓ = Magpie._lengthscale(k)
-                    σ = sqrt(k(g.x[1], g.x[1]))
-                    uvals = Magpie.mean(g, g.x) .+
-                    Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L *
-                    randn(MersenneTwister(sidx * 131 + i), length(g.x))
-                    Magpie.build_decoupled_sample(
-                        k, g.x, uvals;
-                        ℓ = ℓ, σ = σ,
-                        rng = MersenneTwister(sidx * 131 + i + 500_000)
-                    )
-                end for i in 1:length(gps)
-        ]
-        function rhs!(du, u, p, t)
-            kphys = known(u, t)
-            for i in 1:d
-                du[i] = kphys[i] + samplers[i](u)
-            end
-            return nothing
-        end
-        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat = ts)
-        out[sidx, :, :] = Array(sol)
-    end
-    return out
-end
+# Internal Pathwise integrator for CompositeField: `du = known(u,t) + sampler_i(u)`.
+_pathwise_composite(gps, known, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(gps, _exact_pathwise_sampler, u0, tspan, ts, m; known = known)
 
 end # module

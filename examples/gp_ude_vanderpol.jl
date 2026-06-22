@@ -29,12 +29,12 @@
 #          For this example the hard gates are trajectory RMSE and on-trajectory
 #          field error (metrics 1 and 2).
 #
-# **Solver note:** `train!` and `propagate` accept a `solver=` kwarg that is
-# forwarded to every in-loop ODE solve. The default `Tsit5()` pairs cleanly with
-# `GaussAdjoint+MooncakeVJP`; for strongly stiff systems (μ≫1) you would pass
-# `solver=AutoTsit5(Rosenbrock23())` together with
-# `sensealg=InterpolatingAdjoint(autojacvec=ReverseDiffVJP(true))`.
+# **Solver note:** `train!` accepts `solver=`/`sensealg=` kwargs forwarded to every
+# in-loop ODE solve. The default `Tsit5()` pairs cleanly with `GaussAdjoint+MooncakeVJP`;
+# for strongly stiff systems (μ≫1) you would pass `solver=AutoTsit5(Rosenbrock23())`
+# together with `sensealg=InterpolatingAdjoint(autojacvec=ReverseDiffVJP(true))`.
 # At μ=1.5 the system is only mildly stiff and `Tsit5` is the honest choice.
+# (`propagate`'s Pathwise integrators are fixed at `Tsit5()`; PULL uses no ODE solver.)
 #
 # None of these metrics is in-sample loss.
 

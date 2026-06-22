@@ -58,8 +58,7 @@ function bench_exact(N::Int)
     Z = [target[:, i] for i in 1:N]
     field = Magpie.ExactGPField(SqExponentialKernel(), Z; d = 2)
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-    L = Magpie.FieldLayout(N, 2)
-    loss = ext.make_loss(field, L, u0, tspan, ts, target; λ = 1 / (N * 2))
+    loss = ext.make_loss(field, u0, tspan, ts, target; λ = 1 / (N * 2))
     v = copy(field.v0)
     return time_gradient(loss, v)
 end

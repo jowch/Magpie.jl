@@ -52,3 +52,23 @@ end
     @info "σ_obs recovery (SVGP)" σtrue σ_obs ratio = σ_obs / σtrue
     @test 0.5 * σtrue < σ_obs < 2.0 * σtrue
 end
+
+@testset "Gaussian NLL normalizer: argmin over logσ_obs = ½·log(SSE/Nd)" begin
+    # Pure (no-solver) oracle for the load-bearing normalizer. The σ_obs identifiability rests
+    # entirely on `_gaussian_nll`: argmin over logσ_obs must equal the residual RMS, and the
+    # absolute value must match the closed form (this also pins the additive 2π, which the
+    # argmin alone is blind to). The training tests above only bound σ_obs to ±2×.
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    R = [0.3, -0.7, 1.1, -0.2, 0.5, -0.9, 0.15]   # fixed residual array
+    sse = sum(abs2, R); Nd = length(R)
+    f(logσ) = ext._gaussian_nll(sse, Nd, logσ)
+
+    logσ_star = 0.5 * log(sse / Nd)               # analytic minimizer
+    grid = range(logσ_star - 2, logσ_star + 2; length = 8001)
+    logσ_num = grid[argmin([f(g) for g in grid])]
+    @test isapprox(logσ_num, logσ_star; atol = 1.0e-3)   # argmin pins the 1/(2σ²) : (Nd/2) ratio
+
+    lσ = 0.123                                     # value at an arbitrary point pins the 2π constant
+    @test f(lσ) ≈ sse / (2 * exp(2lσ)) + (Nd / 2) * log(2π * exp(2lσ)) rtol = 1.0e-12
+    @test f(logσ_star + 0.5) > f(logσ_star) && f(logσ_star - 0.5) > f(logσ_star)   # convex in logσ_obs
+end

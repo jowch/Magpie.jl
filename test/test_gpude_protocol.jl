@@ -74,6 +74,23 @@ end
     @test wnorm > 1.0e-3
 end
 
+@testset "CompositeField: propagate(method=PULL()) throws by design" begin
+    # Documented intentional contract: PULL needs the combined Jacobian of known+GP_mean,
+    # which is not implemented, so it errors rather than silently producing wrong moments.
+    # Pathwise is the supported composite propagator. Lock the contract against silent
+    # dispatch regressions (e.g. a refactor falling through to a NaN-producing path).
+    Random.seed!(11)
+    u0 = [-1.0, 1.0]; tspan = (0.0, 4.0)
+    ts = collect(range(tspan...; length = 8))
+    target = Array(solve(ODEProblem(fhn_full!, u0, tspan), Tsit5(); saveat = ts))
+    Z = [target[:, i] for i in 1:size(target, 2)]
+    cf = CompositeField(fhn_known, ExactGPField(SqExponentialKernel(), Z; d = 2))
+    @test_throws ErrorException Magpie.propagate(cf, u0, tspan; method = Magpie.PULL(), ts = ts)
+    # Pathwise still works (shape + finiteness) — the supported path.
+    ens = Magpie.propagate(cf, u0, tspan; method = Magpie.Pathwise(n = 16), ts = ts)
+    @test size(ens) == (16, 2, length(ts)) && all(isfinite, ens)
+end
+
 @testset "CompositeField protocol: posterior returns residual GP" begin
     # Assert (b): posterior(cf, vopt) returns the residual GP (d ExactGPs, length d, predmean callable)
     Random.seed!(7)

@@ -100,6 +100,16 @@ end
     D2_expected = h .* Matrix(Diagonal([only(AbstractGPs.cov(gps[1], [u0], [μ1]))]))
     @test norm(Dns[2] - D2_expected) < 1.0e-12
     @info "PULL Dn oracle" max_err D2_err = norm(Dns[2] - D2_expected)
+
+    # Buffer TRUNCATION path (lo > 1): the full-buffer test above and the buffer=0 canary only
+    # exercise the extremes. With a small buffer the far-past terms (carrying the most A factors)
+    # are dropped and the retained near-past window must still telescope correctly — guards the
+    # `lo = max(1, npast-buffer+1)` bound and the `i > lo` prodA-advance off-by-one.
+    for k in (1, 3, 7)
+        Dns_k = ext._pull_Dn_sequence(gps, u0, ts; buffer = k)
+        Dref_k = _bruteforce_Dn(gps, u0, ts; buffer = k)
+        @test maximum(norm(Dns_k[n] - Dref_k[n]) for n in eachindex(Dref_k)) < 1.0e-9
+    end
 end
 
 @testset "PULL: linear oracle + Dn=0 canary (the load-bearing assertion)" begin

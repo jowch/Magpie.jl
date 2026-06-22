@@ -59,7 +59,7 @@ end
 """Sparse variational GP as a full spine `AbstractGPModel` (per interface-design). Stores enough to
 serve the whole AbstractGP contract via the whitened moments: `α = L_ZZ'\\μ` (predmean), plus the
 inducing Cholesky `L_ZZ` and the variational factor `L_S` (var/cov — needed by SVGP PULL uncertainty).
-mean/var/cov methods are defined in Task 7 via `svgp_moments`."""
+mean/var/cov methods are defined below via `svgp_moments`."""
 struct SparseGP{Tp, TZ, Tα, TL, TS} <: AbstractGPModel
     prior::Tp; Z::TZ; α::Tα; L_ZZ::TL; L_S::TS
 end
@@ -68,7 +68,10 @@ end
 # `[logℓ, logσ, logσ_obs, <field-specific>...]`. logσ_obs (index 3) is the observation-noise
 # log-std used ONLY by the data term (Gaussian NLL); it is NOT threaded into the solve param `pf`.
 # Every field-specific block offset is `NHYP + ...`, so inserting/removing a hyper slot touches
-# this one constant — no raw `v[3...]` index arithmetic survives downstream.
+# this one constant — no raw `v[3...]` index arithmetic on the TRAINED vector survives downstream.
+# (The in-loss SOLVE param `pf` — built by each field's `field_rhs` — carries its own separate
+# layout, e.g. `[logℓ, logσ, vec(Z), vec(α)]`, internal to the `field_rhs`/`rhs!` pair; that one
+# does NOT use NHYP and is indexed directly within the closure that builds it.)
 const NHYP = 3
 
 "Flat-Vector layout helper for Stage-1/2 trained params `[logℓ, logσ, logσ_obs, vec(w)]` (lognoise is fixed on the field)."
@@ -95,10 +98,8 @@ function train! end
 function propagate end
 function posterior_gps end
 function posterior_sparsegps end
-# `posterior` is the new canonical solver-free reconstruction generic (unifies
-# posterior_gps/posterior_sparsegps). Task 1.1 defines the generic + "not loaded" fallback
-# and EXPORTS it; the ext bodies + the alias unification land in Task 1.2 (so the existing
-# ext-defined `posterior_gps`/`posterior_sparsegps` methods are left intact this phase).
+# `posterior` is the canonical solver-free reconstruction generic; `posterior_gps` /
+# `posterior_sparsegps` are kept as public aliases forwarding to it (bodies in the ext).
 function posterior end
 train!(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 propagate(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
@@ -205,7 +206,7 @@ function gpfield(field::ExactGPField, u, pf)
 end
 
 # ---------------------------------------------------------------------------
-# SVGPField convenience constructor + layout helpers. Task 7b.
+# SVGPField convenience constructor + layout helpers.
 # ---------------------------------------------------------------------------
 
 """
@@ -284,7 +285,7 @@ function regularizer(field::SVGPField, v; λ = 1.0, logℓ_ref = 0.0, s = 0.5, �
 end
 
 # ---------------------------------------------------------------------------
-# Pure SVGP math — no SciML. Task 7.
+# Pure SVGP math — no SciML.
 # ---------------------------------------------------------------------------
 
 """
@@ -354,12 +355,16 @@ function svgp_moments(prior, Z, L_ZZ, α, L_S, u)
     kZu = vec(AbstractGPs.cov(prior, Z, [u]))
     A = L_ZZ \ kZu
     μ_star = only(AbstractGPs.mean(prior, [u])) + dot(kZu, α)
-    σ2 = only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A)
+    # `k(u,u) - A'A` is the FITC/SVGP marginal; `+‖L_S'A‖²` is the variational correction.
+    # Clamp at source: when A'A ≈ k(u,u) and the L_S correction is tiny, roundoff can make
+    # this slightly negative. var/cov consumers (and PULL's field_var) must never see a
+    # negative marginal. This is the prediction path only — no through-solver AD here.
+    σ2 = max(zero(μ_star), only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A))
     return μ_star, σ2
 end
 
 # ---------------------------------------------------------------------------
-# SparseGP — full AbstractGPModel via svgp_moments. Task 7.
+# SparseGP — full AbstractGPModel via svgp_moments.
 # ---------------------------------------------------------------------------
 
 """
@@ -404,7 +409,7 @@ Statistics.cov(g::SparseGP, xs::AbstractVector) = Matrix(Symmetric(Statistics.co
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Decoupled (Matheron) GP sampler — pure core, no SciML, no autodiff. Task 8.
+# Decoupled (Matheron) GP sampler — pure core, no SciML, no autodiff.
 # ---------------------------------------------------------------------------
 
 """
@@ -453,6 +458,11 @@ function build_decoupled_sample(
     b = rand(rng, D) .* (2π)
     w = (σ .* randn(rng, D))                      # output-scale enters the RFF prior amplitude
     Φw = [dot(w, _rff_features(z, ω, b, D)) for z in Z]
+    # NOTE: this `jitter` is a small ABSOLUTE nugget controlling the Matheron interpolation
+    # fidelity at Z — deliberately distinct from the posterior's RELATIVE jitter·σ² (which
+    # exists to keep Mooncake's Cholesky backward from throwing during through-solver TRAINING).
+    # This sampler runs on the non-AD propagation path, so the relative-jitter concern does not
+    # apply; an absolute nugget is the standard Matheron choice (smaller ⇒ tighter interpolation).
     K = kernelmatrix(kernel, Z) + jitter * I
     v = _chol(K) \ (u .- Φw)
     return DecoupledGPSample(w, ω, b, D, v, collect(Z), kernel)

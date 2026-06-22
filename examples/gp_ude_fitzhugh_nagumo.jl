@@ -86,23 +86,34 @@ cf, vopt = train!(cf, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (25 * 2))
 # `posterior(cf, vopt)` returns the RESIDUAL GPs (the trained part only; known physics is fixed).
 # We compare the posterior residual mean against the true cubic `[-v³/3, 0]` at visited states.
 #
-# The GP IS learning the cubic over the visited v-range `(-1.9, -1.0)`. Median residual error ≈ 0.8
-# against a true cubic with median magnitude ≈ 1.4 — the GP partially corrects the cubic on
-# the single trajectory. Perfect pointwise recovery would require a full limit-cycle trajectory
-# (period ≈ 40 s; single-shooting at that horizon is numerically unstable).
+# The GP IS learning the cubic over the visited v-range `(-1.9, -1.0)`. Median residual error
+# ≈ 0.84 against a true cubic with median magnitude ≈ 1.49 — the GP cuts the residual to ≈ 0.56×
+# the do-nothing (zero-GP) baseline, so it is doing real work, not sitting at zero. Perfect
+# pointwise recovery would require a full limit-cycle trajectory (period ≈ 40 s; single-shooting
+# at that horizon is numerically unstable).
 
 residual_gps = posterior(cf, vopt)
 
 visited_pts = [target[:, i] for i in 1:size(target, 2)]
 residual_err = field_error(residual_gps, residual_true, visited_pts)
 
+# Zero-GP baseline: the residual error a do-nothing GP (constant 0) would score — i.e.
+# the median magnitude of the true cubic at visited states. The gate below is RELATIVE to
+# this baseline so it cannot be passed by a GP stuck at zero (which would score exactly it).
+zero_gp_baseline = median(norm(residual_true(z)) for z in visited_pts)
+
 @info "Residual field error at visited states" residual_err.median residual_err.q90
-@info "True cubic magnitude at visited states (for context)" median(norm(residual_true(z)) for z in visited_pts)
+@info "Zero-GP baseline (do-nothing residual error; gate is relative to this)" zero_gp_baseline ratio = residual_err.median / zero_gp_baseline
 
 # ## 2. Trajectory RMSE — integrate the full composite field (known + GP)
 #
 # For the trajectory metric, we need the FULL composite field: `known(u,t) + GP(u)`.
 # We reconstruct it by solving the ODE with both parts active via `field_rhs(cf, vopt)`.
+#
+# NOTE: `field_rhs` is an UNEXPORTED extension internal (the in-loss RHS builder). There is
+# not yet a public composite mean-trajectory integrator — `posterior(cf)` returns only the
+# residual GPs, and `propagate(cf; method=Pathwise())` gives ensembles, not the mean path.
+# Reaching into the extension here is the supported reconstruction path pending a public one.
 
 ext = Base.get_extension(Magpie, :MagpieSciMLExt)
 pf_opt, rhs_opt! = ext.field_rhs(cf, vopt)
@@ -203,16 +214,18 @@ cov90_pull_res = coverage(truth_vecs, μs_res, Σs_res; level = 0.9)
 # ## Anti-rot assertions (#src lines run on direct execution only)
 #
 # Hard gates:
-#   1. Residual field error < 1.5 — the GP must partially learn the cubic at visited states.
-#      The true cubic has median magnitude ≈ 1.4 at training states; an error < 1.5 confirms
-#      the GP is doing real work (not just sitting at zero). Perfect recovery (error < 0.1)
-#      would require a full limit-cycle trajectory, which single-shooting can't stably handle.
+#   1. Residual field error < 0.7 × zero-GP baseline — the GP must beat the do-nothing
+#      predictor (constant 0) by a clear margin. The baseline is the median true-cubic
+#      magnitude (≈ 1.49); the trained GP scores ≈ 0.84 (≈ 0.56× baseline), so the 0.7×
+#      threshold (≈ 1.05) clears with ~25% headroom AND cannot be passed by a zero GP
+#      (which scores exactly the baseline). Perfect recovery (error → 0) would require a
+#      full limit-cycle trajectory, which single-shooting can't stably handle.
 #   2. Trajectory RMSE < 0.3 — the full composite field (known + GP residual) recovers the
 #      training trajectory.
 #   3. Composite-field Pathwise coverage: assert if ≥ 0.6, else @info honestly.
 
 using Test  #src
-@test residual_err.median < 1.5    #src  GP partially learns the cubic at visited states
+@test residual_err.median < 0.7 * zero_gp_baseline    #src  GP beats the zero-GP baseline by ≥30% (non-tautological)
 @test traj_rmse < 0.3              #src  full composite field (known + GP) recovers trajectory
 @test size(ens_cf) == (128, 2, length(ts_test)) && all(isfinite, ens_cf)  #src  ensemble shape + finiteness
 

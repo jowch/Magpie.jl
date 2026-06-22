@@ -129,7 +129,7 @@ gps_ms = [r.gps   for r in seed_results]
 traj_rmses = [r.traj_rmse for r in seed_results]
 
 @info "Multi-seed trajectory RMSE (all should be similar — fitted the data):"
-for (i, ((seed, logℓ0), v, rmse)) in enumerate(zip(SEED_INITS, vopts_ms, traj_rmses))
+for ((seed, logℓ0), v, rmse) in zip(SEED_INITS, vopts_ms, traj_rmses)
     @info "  Seed $seed (logℓ₀=$logℓ0)" logℓ = round(v[1]; digits = 3) logσ = round(v[2]; digits = 3) traj_rmse = round(rmse; digits = 4)
 end
 

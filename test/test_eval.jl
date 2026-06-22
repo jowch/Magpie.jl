@@ -90,6 +90,19 @@ end
     @test fe.q90 < 0.1
 end
 
+@testset "field_error: median/q90 match StatsBase on a known error set" begin
+    # The dense-fit test above leaves median≈q90≈0, so a wrong quantile probability would pass
+    # there. Pin the q90 VALUE: a no-data GP predicts 0, so the error at z is ‖truefield(z)‖.
+    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6)   # no `update` → predmean ≡ 0
+    truefield(z) = [z[1]]                                 # error at z = |0 − z[1]| = |z[1]|
+    pts = [[x] for x in 1.0:10.0]                          # per-point errors = 1, 2, …, 10
+    fe = field_error([g], truefield, pts)
+    expected = collect(1.0:10.0)
+    @test fe.median ≈ median(expected)                    # = 5.5
+    @test fe.q90 ≈ quantile(expected, 0.9)                # matches the exact StatsBase rule the code uses
+    @test fe.q90 > fe.median                              # ordering sanity
+end
+
 # ---------------------------------------------------------------------------
 # recovery_metrics — pure signature, no solver
 # ---------------------------------------------------------------------------

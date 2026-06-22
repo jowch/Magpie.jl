@@ -21,8 +21,11 @@
 #          nonlinear limit cycle; coverage collapses to ~0. This is a documented
 #          *Euler limitation of PULL*, not a failure of the learned field.
 #        - **Pathwise** — a Monte-Carlo ensemble of decoupled GP samples, each
-#          integrated as a proper ODE. This is the accurate, validated-uncertainty
-#          story; its empirical band actually covers the held-out truth.
+#          integrated as a proper ODE. Its empirical band achieves nominal-or-
+#          conservative coverage of the held-out truth (here it *over*-covers:
+#          coverage = 1.0 at 90% nominal, i.e. the band is wide/conservative rather
+#          than tightly calibrated). The gate is a one-sided lower bound: it guards
+#          against under-coverage regressions, not against over-dispersion.
 #
 # None of these metrics is in-sample loss.
 
@@ -128,7 +131,7 @@ cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level = 0.9)
 
 @info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
 
-# ### 3b. Pathwise — Monte-Carlo ensemble of decoupled GP samples (REAL validation)
+# ### 3b. Pathwise — Monte-Carlo ensemble of decoupled GP samples
 #
 # Each of `n` samples is a decoupled GP draw integrated as a proper ODE, so the
 # ensemble carries the field's uncertainty *without* PULL's Euler drift.
@@ -142,7 +145,7 @@ nsteps = length(ts_test)
 Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]                     # d×d per step (samples in rows)
 cov90_path = coverage(truth_vecs, μs_path, Σs_path; level = 0.9)
 
-@info "Held-out-IC Pathwise coverage at 90% nominal (ensemble, validated)" cov90_path
+@info "Held-out-IC Pathwise coverage at 90% nominal (ensemble; nominal-or-conservative)" cov90_path
 
 # ## 4. Plot: Pathwise ensemble band over the clean held-out trajectory
 #
@@ -180,6 +183,7 @@ using Test  #src
 # PULL coverage is @info'd only — its Euler mean drifts off the LV limit cycle, so a
 # low/zero coverage is a documented PULL limitation, not a correctness bug.            #src
 @info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits = 3)) (Euler-limited; documented contrast)."  #src
-# Pathwise is the real validated-uncertainty gate: the decoupled-sample ensemble        #src
-# integrated as proper ODEs should actually cover the clean held-out trajectory.        #src
-@test cov90_path ≥ 0.6   #src  Pathwise ensemble coverage at 90% nominal (validated uncertainty)
+# Pathwise lower-bound gate: the decoupled-sample ensemble integrated as proper ODEs     #src
+# should cover the clean held-out trajectory. One-sided (≥0.6) — guards under-coverage    #src
+# regressions; the band is conservative here (over-covers, cov≈1.0), which is acceptable. #src
+@test cov90_path ≥ 0.6   #src  Pathwise ensemble coverage at 90% nominal (lower-bound regression guard)

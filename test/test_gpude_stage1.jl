@@ -9,9 +9,9 @@ import Mooncake
     u0 = [2.5]; tspan = (0.0, 4.0); ts = collect(range(tspan...; length = 10))
     target = Array(solve(ODEProblem((u, p, t) -> [truef(u[1])], u0, tspan), Tsit5(); saveat = ts))
     field = Magpie.ExactGPField(SqExponentialKernel(), Z; d = 1)
-    loss0 = ext.make_loss(field, Magpie.FieldLayout(10, 1), u0, tspan, ts, target)(field.v0)
+    loss0 = ext.make_loss(field, u0, tspan, ts, target)(field.v0)
     field, vopt = Magpie.train!(field, (ts, target); tspan, adam_iters = 50, maxiters = 50)  # small iters: mechanism gate, not full recovery
-    lossT = ext.make_loss(field, Magpie.FieldLayout(10, 1), u0, tspan, ts, target)(vopt)
+    lossT = ext.make_loss(field, u0, tspan, ts, target)(vopt)
     @info "train!" loss0 lossT
     @test lossT < loss0                                   # training reduced the loss
     gps = Magpie.posterior_gps(field, vopt)   # PUBLIC path (not ext.posterior_gps) — guards the qualified-extension fix
