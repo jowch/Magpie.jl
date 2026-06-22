@@ -15,6 +15,7 @@
 ENV["GKSwstype"] = "100"  ## GR headless rendering (no display required)
 
 using Magpie, KernelFunctions, LinearAlgebra, Random
+using Statistics: mean, std
 using Plots; gr()
 
 # ## The function and its landscape
@@ -196,24 +197,34 @@ plt_recovered
 #     only points in `[-2,2]²`; on a real problem, restrict the survey to the region of interest
 #     or prune by posterior gradient *variance*.
 
-# ## Learning curves — resolved-of-9, tracked after every observation
+# ## Learning curves — resolved-of-9, averaged over trials
 #
-# Rather than re-run to fixed budgets, we walk **one** incremental loop and, after *each*
-# observation, tally how many of the 9 true critical points the GP has **resolved**: a Newton step
-# on the GP-mean gradient, started at the true location, stays put (small residual gradient) and
-# the mean-Hessian gives the right Morse type. That check is cheap (one polish per true point), so
-# the tally updates every step — giving a dense curve from a single pass instead of separate runs.
+# After *each* observation we tally how many of the 9 true critical points the GP has **resolved**:
+# a Newton step on the GP-mean gradient, started at the true location, stays put (small residual
+# gradient) and the mean-Hessian gives the right Morse type. That check is cheap (one polish per
+# true point), so the tally updates every step. We repeat each setting over `NTRIALS` seeds and
+# plot the **mean ± 1σ**, for the active loop vs uniform random on the natural `[-2,2]²` and the
+# large `[-6,6]²` domain.
 
+NTRIALS = 10
+
+## A true critical point counts as "resolved" once the GP mean has a correctly-typed gradient-zero
+## there: the Morse type from H̄(p) matches, and a single damped-Newton step from p stays local
+## (≈0 only when μ∇(p)≈0 with a well-conditioned Hessian). One Hessian eval per point — cheap
+## enough to tally every observation across all trials.
 function n_resolved(g, box)
     count(zip(truth, true_kinds)) do (p, k)
-        x, μ∇, H = newton_polish(g, p, box; iters = 8)
-        norm(x .- p) < 0.25 && norm(μ∇) < 1e-2 && classify(H) == k
+        μ∇, _, H = grad_predict(g, p)
+        classify(H) == k && norm((Symmetric(H) + 1e-6I) \ μ∇) < 0.3
     end
 end
 
-## active: random seed phase, then acquisition phase; tally after every observation
-function resolve_curve_active(box; ℓ0, seed, nsteps)
+## one active trial: random seed phase, then acquisition phase; tally after every observation.
+## The acquisition is maximized over a coarse candidate grid (cheap; the animation loop above uses
+## the full grid) — enough to locate the informative region across all trials.
+function active_trial(box, seed; ℓ0, nsteps)
     Random.seed!(seed); L = box.ub[1]
+    cand = Points(grid_points(box; per_axis = 22))
     al = ActiveLearner(ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4), GradStraddle(β = 1.96))
     ns = Int[]; tally = Int[]
     for _ in 1:20
@@ -222,14 +233,14 @@ function resolve_curve_active(box; ℓ0, seed, nsteps)
     end
     al.acq = LocalPenalization(al.acq, al.Xs; c = 0.5)
     for t in 1:nsteps
-        x = acquire(al; over = box); observe!(al, x, f(x)); t % 10 == 0 && fit!(al)
+        x = acquire(al; over = cand); observe!(al, x, f(x)); t % 10 == 0 && fit!(al)
         push!(ns, length(al.Xs)); push!(tally, n_resolved(al.gp, box))
     end
     (ns, tally)
 end
 
-## random: add one uniform point at a time (incremental update); tally after each
-function resolve_curve_random(box; ℓ0, seed, n)
+## one random trial: add one uniform point at a time (incremental update); tally after each
+function random_trial(box, seed; ℓ0, n)
     Random.seed!(seed); L = box.ub[1]
     g = ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4)
     ns = Int[]; tally = Int[]
@@ -240,19 +251,31 @@ function resolve_curve_random(box; ℓ0, seed, n)
     (ns, tally)
 end
 
-small = Box([-2.0, -2.0], [2.0, 2.0])
-na_s, ta_s = resolve_curve_active(small; ℓ0 = 0.6, seed = 1, nsteps = 120)
-nr_s, tr_s = resolve_curve_random(small; ℓ0 = 0.6, seed = 7, n = 140)
-na_l, ta_l = resolve_curve_active(box;   ℓ0 = 1.2, seed = 1, nsteps = 120)
-nr_l, tr_l = resolve_curve_random(box;   ℓ0 = 1.2, seed = 7, n = 140)
+## average a trial function over NTRIALS seeds → (ns, mean_tally, std_tally)
+function average_curve(trial; seeds)
+    local ns; tallies = Vector{Int}[]
+    for s in seeds
+        ns, t = trial(s); push!(tallies, t)
+    end
+    M = reduce(hcat, tallies)                 # (#observations × #trials)
+    (ns, vec(mean(M; dims = 2)), vec(std(M; dims = 2)))
+end
 
-plt_lc = plot(na_l, ta_l; lw = 2, lc = :steelblue, label = "active, [-6,6]²",
+small = Box([-2.0, -2.0], [2.0, 2.0])
+na_s, ma_s, sa_s = average_curve(s -> active_trial(small, s; ℓ0 = 0.6, nsteps = 120); seeds = 1:NTRIALS)
+nr_s, mr_s, sr_s = average_curve(s -> random_trial(small, s; ℓ0 = 0.6, n = 140);     seeds = 101:100+NTRIALS)
+na_l, ma_l, sa_l = average_curve(s -> active_trial(box,   s; ℓ0 = 1.2, nsteps = 120); seeds = 1:NTRIALS)
+nr_l, mr_l, sr_l = average_curve(s -> random_trial(box,   s; ℓ0 = 1.2, n = 140);     seeds = 101:100+NTRIALS)
+
+@info "learning-curve endpoints (mean resolved of 9)" active_large=ma_l[end] random_large=mr_l[end] active_small=ma_s[end] random_small=mr_s[end]
+
+plt_lc = plot(na_l, ma_l; ribbon = sa_l, fillalpha = 0.15, lw = 2, lc = :steelblue, label = "active, [-6,6]²",
     xlabel = "observations", ylabel = "critical points resolved (of 9)",
-    title = "Learning curves (tracked every observation)", ylims = (-0.3, 9.3),
+    title = "Learning curves (mean ± 1σ over $NTRIALS trials)", ylims = (-0.3, 9.3),
     legend = :bottomright, size = (580, 400))
-plot!(plt_lc, nr_l, tr_l; lw = 2, ls = :dash, lc = :gray,       label = "random, [-6,6]²")
-plot!(plt_lc, na_s, ta_s; lw = 2,            lc = :seagreen,    label = "active, [-2,2]²")
-plot!(plt_lc, nr_s, tr_s; lw = 2, ls = :dash, lc = :darkorange, label = "random, [-2,2]²")
+plot!(plt_lc, nr_l, mr_l; ribbon = sr_l, fillalpha = 0.15, lw = 2, ls = :dash, lc = :gray,       label = "random, [-6,6]²")
+plot!(plt_lc, na_s, ma_s; ribbon = sa_s, fillalpha = 0.15, lw = 2,            lc = :seagreen,    label = "active, [-2,2]²")
+plot!(plt_lc, nr_s, mr_s; ribbon = sr_s, fillalpha = 0.15, lw = 2, ls = :dash, lc = :darkorange, label = "random, [-2,2]²")
 
 # ## Takeaway
 #
@@ -271,5 +294,5 @@ plot!(plt_lc, nr_s, tr_s; lw = 2, ls = :dash, lc = :darkorange, label = "random,
 using Test                                                                         #src
 @test length(filter(c -> any(p -> isapprox(c.point, p; atol=0.25), truth), cps)) ≥ 6   #src
 @test count(c -> c.kind == :min, cps) ≥ 3                                           #src
-@test ta_l[end] ≥ tr_l[end]    ## active resolves ≥ random on the large domain       #src
-@test tr_s[end] ≥ 6            ## random is already strong on the small domain        #src
+@test ma_l[end] ≥ mr_l[end]    ## active resolves ≥ random on the large domain (mean) #src
+@test mr_s[end] ≥ 6            ## random is already strong on the small domain (mean)  #src
