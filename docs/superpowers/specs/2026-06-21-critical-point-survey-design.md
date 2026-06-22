@@ -289,3 +289,16 @@ the regime where active learning genuinely beats random:
   blanket `LocalPenalization`.
 - Higher-dimensional enumeration (grid extraction does not scale past ~3-D; needs sample-based
   multi-start). A separable d=3 test showed random still competitive when minima are lattice-spread.
+
+---
+## As-built (final, 2026-06-22) — supersedes the original survey design
+
+The contrived critical-point *survey* (separable double-well; large-box "active-beats-random" framing) is superseded. Spikes + reconnaissance established:
+
+- **Realistic targets, shipped as Literate examples:** the Müller–Brown potential (the standard transition-state benchmark) and the Maunga Whau volcano DEM (real terrain; all three Morse types).
+- **Core capability (the product):** kernel-generic derivative-GP extraction — `grad_predict` → multi-start Newton → Morse `classify` — recovers and labels all critical points from coverage-sampled f-values (sub-0.05 on Müller–Brown). Gradient-variance pruning + interior masking drop spurious under-sampled zeros.
+- **Honest negative result:** active learning does NOT beat random for scarce-budget critical-point *enumeration*. Verified across five acquisitions (including a novel standardized stationarity density N(0; μ∇, Σ∇)) and two topologies, cold/warm-start/synthetic. Mechanism: it is **extraction-limited**, not acquisition-limited — the Newton extractor needs spatial coverage to represent every basin, so any acquisition that concentrates the budget starves the unvisited basins.
+- **The genuine active-learning win:** *targeted* transition-state search — `saddle_walk` (min-mode/dimer walk on the GP-posterior-mean field) + `transition_state` (seed from two known minima → predict-saddle → evaluate → update). Localizes the transition state in ~10 evaluations (err ~0.03) where random fails at T ≤ 30 (err ~0.45). min-mode is the robust default; Newton-from-midpoint diverges on misaligned pairs.
+- **Package fix:** `fit` over-smooths at small n (pure MLE drives ℓ up, can hit the bound); fixed by a default-on MAP lengthscale prior centered on the initial ℓ (`ℓ_prior=:auto`).
+
+Commits (on worktree-critical-points): b0d4a3d (fit prior), 16aafb1 (saddle search), 4e6dbd7 (MB example), a3697dd (volcano example). Full suite 85/85 green; docs build clean.
