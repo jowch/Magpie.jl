@@ -42,3 +42,5 @@ JuliaLocalPreferences.toml
 # generated example plots (regenerated on docs/example runs)
 *_trajectory*.png
 *_coverage*.png
+*_ridge*.png
+*_divergence*.png
