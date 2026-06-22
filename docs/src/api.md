@@ -47,6 +47,15 @@ grid_points
 acquire
 ```
 
+## Transition-state search
+
+```@docs
+saddle_walk
+newton_polish
+transition_state
+classify
+```
+
 ## Active-learning loop
 
 ```@docs

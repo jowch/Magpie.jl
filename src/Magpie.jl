@@ -29,11 +29,13 @@ import StatsBase: mean_and_var
 
 include("spine.jl"); include("fit.jl"); include("laplace.jl")
 include("derivatives.jl"); include("acquisitions.jl"); include("maximize.jl"); include("loop.jl")
+include("saddle.jl")
 
 export AbstractGPModel, ExactGP, update, predmean, predict, nlml, grad_predict
 export LaplaceGP
 export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, GradStraddle, RandGradStraddle, LocalPenalization, resample
 export Box, Points, SobolPolish, grid_points, acquire
 export ActiveLearner, observe!, fit!, run!, posterior_gp, queried_points, all_data
+export saddle_walk, newton_polish, transition_state, classify
 
 end

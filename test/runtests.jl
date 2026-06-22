@@ -6,4 +6,5 @@ using Test
     include("test_maximize.jl"); include("test_loop.jl"); include("test_exemplar_A1.jl")
     include("test_exemplar_A2.jl")
     include("test_exemplar_critpoints.jl")
+    include("test_saddle.jl")
 end
