@@ -256,15 +256,19 @@ function unpack(field::SVGPField, v)
 end
 
 """
-    regularizer(field::SVGPField, v; λ, logℓ_ref, s) -> Real
+    regularizer(field::SVGPField, v; λ, logℓ_ref, s, λσ, sσ) -> Real
 
 Whitened collapsed KL across all outputs (summed once, not per trajectory) plus the
-logℓ Gaussian prior. Pure — no solver.
+logℓ Gaussian prior and a weak logσ Gaussian prior. Pure — no solver.
+
+The logσ prior (`λσ·logσ²/(2sσ²)`) mirrors `ExactGPField`'s regularizer, preventing
+σ-collapse (logσ→−∞, σ²→0) during long ADAM runs on noisy data. Without it, the SVGP
+can drive the kernel signal to zero, killing the GP contribution entirely.
 """
-function regularizer(field::SVGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, _kw...)
+function regularizer(field::SVGPField, v; λ=1.0, logℓ_ref=0.0, s=0.5, λσ=1.0, sσ=1.0, _kw...)
     p = unpack(field, v)
     kl = sum(svgp_kl(p.μ[:,i], p.Ls[i]) for i in 1:field.dout)
-    kl + λ*(p.logℓ - logℓ_ref)^2/(2s^2)
+    kl + λ*(p.logℓ - logℓ_ref)^2/(2s^2) + λσ*p.logσ^2/(2sσ^2)
 end
 
 # ---------------------------------------------------------------------------
