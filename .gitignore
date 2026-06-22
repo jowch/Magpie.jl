@@ -44,3 +44,6 @@ JuliaLocalPreferences.toml
 *_coverage*.png
 *_ridge*.png
 *_divergence*.png
+*_residual*.png
+*_pathwise*.png
+sf_*.png
