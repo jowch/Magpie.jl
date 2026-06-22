@@ -92,17 +92,18 @@ function newton_polish(g, x0, box; iters = 12, λ = 1e-6)
     return (x, μ∇, H)
 end
 
+## Morse classification from a (mean) Hessian: index = # negative eigenvalues.
+classify(H; ε = 1e-3) = (λ = eigvals(Symmetric(H));
+    any(<(ε), abs.(λ))       ? :unclassified :
+    count(<(0), λ) == 0      ? :min :
+    count(<(0), λ) == length(λ) ? :max : :saddle)
+
 function critical_points(g, box; per_axis = 30, ε = 1e-3, restol = 1e-2)
-    d = length(box.lb)
     polished = [newton_polish(g, x, box) for x in grid_points(box; per_axis = per_axis)]
     conv = filter(p -> norm(p[2]) < restol, polished)
     uniq = unique(p -> round.(p[1]; digits = 1), conv)
     return map(uniq) do (x, _, H)
-        λ = eigvals(Symmetric(H))
-        kind = any(<(ε), abs.(λ)) ? :unclassified :
-               count(<(0), λ) == 0 ? :min :
-               count(<(0), λ) == d ? :max : :saddle
-        (point = x, kind = kind)
+        (point = x, kind = classify(H; ε = ε))
     end
 end
 
@@ -195,51 +196,63 @@ plt_recovered
 #     only points in `[-2,2]²`; on a real problem, restrict the survey to the region of interest
 #     or prune by posterior gradient *variance*.
 
-# ## Learning curves — recovery vs. budget, and the role of domain size
+# ## Learning curves — resolved-of-9, tracked after every observation
 #
-# How fast does recovery grow, and does active learning help? We track recovered-of-9 against the
-# number of observations, for the active loop and a uniform-random baseline, on the **natural**
-# `[-2,2]²` domain and the **large** `[-6,6]²` domain.
+# Rather than re-run to fixed budgets, we walk **one** incremental loop and, after *each*
+# observation, tally how many of the 9 true critical points the GP has **resolved**: a Newton step
+# on the GP-mean gradient, started at the true location, stays put (small residual gradient) and
+# the mean-Hessian gives the right Morse type. That check is cheap (one polish per true point), so
+# the tally updates every step — giving a dense curve from a single pass instead of separate runs.
 
-function recovery_curve_active(box; ℓ0, seed, budgets)
-    Random.seed!(seed)
-    al = ActiveLearner(ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4), GradStraddle(β = 1.96))
-    L = box.ub[1]
-    for x in [2L .* rand(2) .- L for _ in 1:20]; observe!(al, x, f(x)); end
-    al.acq = LocalPenalization(al.acq, al.Xs; c = 0.5)
-    ys = Int[]; nextcp = 1
-    for t in 1:(maximum(budgets) - 20)
-        x = acquire(al; over = box); observe!(al, x, f(x))
-        t % 10 == 0 && fit!(al)
-        if nextcp ≤ length(budgets) && length(al.Xs) ≥ budgets[nextcp]
-            push!(ys, length(filter(c -> any(p -> isapprox(c.point, p; atol = 0.25), truth), critical_points(posterior_gp(al), box; per_axis = 20))))
-            nextcp += 1
-        end
+function n_resolved(g, box)
+    count(zip(truth, true_kinds)) do (p, k)
+        x, μ∇, H = newton_polish(g, p, box; iters = 8)
+        norm(x .- p) < 0.25 && norm(μ∇) < 1e-2 && classify(H) == k
     end
-    ys
 end
 
-function recovery_curve_random(box; ℓ0, seed, budgets)
+## active: random seed phase, then acquisition phase; tally after every observation
+function resolve_curve_active(box; ℓ0, seed, nsteps)
     Random.seed!(seed); L = box.ub[1]
-    map(budgets) do n
-        X = [2L .* rand(2) .- L for _ in 1:n]
-        g = Magpie.fit(update(ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4), X, f.(X)))
-        length(filter(c -> any(p -> isapprox(c.point, p; atol = 0.25), truth), critical_points(g, box; per_axis = 20)))
+    al = ActiveLearner(ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4), GradStraddle(β = 1.96))
+    ns = Int[]; tally = Int[]
+    for _ in 1:20
+        x = 2L .* rand(2) .- L; observe!(al, x, f(x))
+        push!(ns, length(al.Xs)); push!(tally, n_resolved(al.gp, box))
     end
+    al.acq = LocalPenalization(al.acq, al.Xs; c = 0.5)
+    for t in 1:nsteps
+        x = acquire(al; over = box); observe!(al, x, f(x)); t % 10 == 0 && fit!(al)
+        push!(ns, length(al.Xs)); push!(tally, n_resolved(al.gp, box))
+    end
+    (ns, tally)
 end
 
-budgets = [50, 95, 140]
-ar_small = recovery_curve_active(Box([-2.0,-2.0],[2.0,2.0]); ℓ0 = 0.6, seed = 1, budgets = budgets)
-rr_small = recovery_curve_random(Box([-2.0,-2.0],[2.0,2.0]); ℓ0 = 0.6, seed = 7, budgets = budgets)
-ar_large = recovery_curve_active(box; ℓ0 = 1.2, seed = 1, budgets = budgets)
-rr_large = recovery_curve_random(box; ℓ0 = 1.2, seed = 7, budgets = budgets)
+## random: add one uniform point at a time (incremental update); tally after each
+function resolve_curve_random(box; ℓ0, seed, n)
+    Random.seed!(seed); L = box.ub[1]
+    g = ExactGP(with_lengthscale(SqExponentialKernel(), ℓ0); noise = 1e-4)
+    ns = Int[]; tally = Int[]
+    for t in 1:n
+        x = 2L .* rand(2) .- L; g = update(g, [x], [f(x)]); t % 10 == 0 && (g = Magpie.fit(g))
+        push!(ns, t); push!(tally, n_resolved(g, box))
+    end
+    (ns, tally)
+end
 
-plt_lc = plot(budgets, ar_large; m = :circle, lw = 2, lc = :steelblue, mc = :steelblue,
-    label = "active, [-6,6]²", xlabel = "observations", ylabel = "critical points recovered (of 9)",
-    title = "Learning curves", ylims = (-0.3, 9.3), legend = :right, size = (560, 400))
-plot!(plt_lc, budgets, rr_large; m = :square, lw = 2, ls = :dash, lc = :gray, mc = :gray, label = "random, [-6,6]²")
-plot!(plt_lc, budgets, ar_small; m = :circle, lw = 2, lc = :seagreen, mc = :seagreen, label = "active, [-2,2]²")
-plot!(plt_lc, budgets, rr_small; m = :square, lw = 2, ls = :dash, lc = :darkorange, mc = :darkorange, label = "random, [-2,2]²")
+small = Box([-2.0, -2.0], [2.0, 2.0])
+na_s, ta_s = resolve_curve_active(small; ℓ0 = 0.6, seed = 1, nsteps = 120)
+nr_s, tr_s = resolve_curve_random(small; ℓ0 = 0.6, seed = 7, n = 140)
+na_l, ta_l = resolve_curve_active(box;   ℓ0 = 1.2, seed = 1, nsteps = 120)
+nr_l, tr_l = resolve_curve_random(box;   ℓ0 = 1.2, seed = 7, n = 140)
+
+plt_lc = plot(na_l, ta_l; lw = 2, lc = :steelblue, label = "active, [-6,6]²",
+    xlabel = "observations", ylabel = "critical points resolved (of 9)",
+    title = "Learning curves (tracked every observation)", ylims = (-0.3, 9.3),
+    legend = :bottomright, size = (580, 400))
+plot!(plt_lc, nr_l, tr_l; lw = 2, ls = :dash, lc = :gray,       label = "random, [-6,6]²")
+plot!(plt_lc, na_s, ta_s; lw = 2,            lc = :seagreen,    label = "active, [-2,2]²")
+plot!(plt_lc, nr_s, tr_s; lw = 2, ls = :dash, lc = :darkorange, label = "random, [-2,2]²")
 
 # ## Takeaway
 #
@@ -258,5 +271,5 @@ plot!(plt_lc, budgets, rr_small; m = :square, lw = 2, ls = :dash, lc = :darkoran
 using Test                                                                         #src
 @test length(filter(c -> any(p -> isapprox(c.point, p; atol=0.25), truth), cps)) ≥ 6   #src
 @test count(c -> c.kind == :min, cps) ≥ 3                                           #src
-@test ar_large[end] ≥ rr_large[end]    ## active ≥ random on the large domain       #src
-@test rr_small[end] ≥ 6                ## random is already strong on the small one  #src
+@test ta_l[end] ≥ tr_l[end]    ## active resolves ≥ random on the large domain       #src
+@test tr_s[end] ≥ 6            ## random is already strong on the small domain        #src
