@@ -45,6 +45,7 @@ jobs:
           - gp_ude_vanderpol.jl
           - gp_ude_fitzhugh_nagumo.jl
           - gp_ude_scale_forcing.jl
+          - gp_ude_identifiability.jl
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2

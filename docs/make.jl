@@ -13,6 +13,7 @@ push!(EXAMPLES, ("GP-UDE: Lotka-Volterra",                  "gp_ude_lotka_volter
 push!(EXAMPLES, ("GP-UDE: Van der Pol (stiff solver)",      "gp_ude_vanderpol.jl"))
 push!(EXAMPLES, ("GP-UDE: FitzHugh-Nagumo (UDE decomp)",   "gp_ude_fitzhugh_nagumo.jl"))
 push!(EXAMPLES, ("GP-UDE: scale-forcing (SVGP + Pathwise)", "gp_ude_scale_forcing.jl"))
+push!(EXAMPLES, ("GP-UDE: identifiability (ridge + off-data divergence)", "gp_ude_identifiability.jl"))
 
 isdir(GENDIR) && rm(GENDIR; recursive = true)
 mkpath(GENDIR)
