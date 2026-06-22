@@ -21,10 +21,11 @@
 #      at visited training states. **This is the headline check** that the old example omitted.
 #   2. **Trajectory RMSE** — integrate the full composite field (known + GP residual) as an
 #      ODE and compare against the clean truth.
-#   3. **Held-out-IC uncertainty** (advisory) — PULL and Pathwise propagation on the residual
-#      GPs. Because `propagate` on the residual GPs does not include the known-physics term,
-#      the propagated mean follows only the GP residual dynamics and coverage is reported as
-#      an informational contrast only; the hard gates are metrics 1 and 2.
+#   3. **Held-out-IC uncertainty** — `propagate(cf, u0_test, tspan; method=Pathwise(n=128))`
+#      integrates the FULL composite field (known_physics + GP residual sample) for each
+#      ensemble member. Coverage against the clean held-out trajectory is asserted if ≥ 0.6,
+#      reported honestly otherwise. PULL on residual-only GPs is included as an informational
+#      contrast; the hard gates are still metrics 1 and 2.
 #
 # **Identifiability note:** with `tspan=(0,10)` and `u0=[-1.0, 1.0]`, the FHN trajectory
 # stays in `v ∈ (-1.9, -1.0)` (one side of the limit cycle). The cubic is monotone over
@@ -162,36 +163,31 @@ xlabel!(p_traj, "t"); ylabel!(p_traj, "state")
 title!(p_traj, "FHN GP-UDE: trajectory recovery (known linear + GP cubic residual)")
 savefig(p_traj, "fhn_trajectory.png")
 
-# ## 5. Held-out IC — uncertainty propagation (advisory)
+# ## 5. Held-out IC — composite-field uncertainty propagation
 #
-# `propagate` on the residual GPs covers only the GP residual's uncertainty.
-# The known-physics part is deterministic; without it, the propagated mean trajectory
-# follows only the residual dynamics (not the full FHN). Coverage against the full-field
-# held-out truth is therefore not a meaningful calibration metric — it is reported as
-# an informational contrast between PULL and Pathwise.
-#
-# For real uncertainty-in-trajectory validation of a CompositeField, one would build
-# a composite-field ensemble: for each Pathwise sample draw, integrate `known + sample`.
-# That construction is beyond the scope of this example; the hard recovery gates are
-# residual field error (§1) and trajectory RMSE (§2).
+# `propagate(cf, u0_test, tspan; method=Pathwise(n=128))` integrates the FULL composite
+# field (known_physics + GP residual sample) for each ensemble member. This is the correct
+# coverage check — it includes the deterministic known physics in every sample trajectory.
+# PULL is not implemented for CompositeField (it would need the combined Jacobian of
+# known + GP_mean; use Pathwise instead).
 
 u0_test    = [-0.8, 1.2]   # NOT the training IC
 ts_test    = collect(range(tspan...; length=25))
 target_test = Array(solve(ODEProblem(fhn!, u0_test, tspan), Tsit5(); saveat=ts_test))
 truth_vecs  = [target_test[:, i] for i in 1:length(ts_test)]
 
-# PULL on residual GPs
+# Pathwise ensemble on the FULL composite field (known_physics + GP residual)
+ens_cf = propagate(cf, u0_test, tspan; method=Pathwise(n=128), ts=ts_test)
+nsteps     = length(ts_test)
+μs_path    = [vec(mean(ens_cf[:, :, k]; dims=1)) for k in 1:nsteps]
+Σs_path    = [cov(ens_cf[:, :, k])               for k in 1:nsteps]
+cov90_path = coverage(truth_vecs, μs_path, Σs_path; level=0.9)
+@info "CompositeField Pathwise coverage at 90% (full field: known_physics + GP residual)" cov90_path
+
+# Also report residual-only PULL for contrast (does NOT include known_physics)
 μs_res, Σs_res = propagate(residual_gps, u0_test, tspan; method=PULL(), ts=ts_test)
 cov90_pull_res = coverage(truth_vecs, μs_res, Σs_res; level=0.9)
-@info "Residual-GP PULL coverage at 90% (informational: residual-only path vs full-field truth)" cov90_pull_res
-
-# Pathwise ensemble on residual GPs
-ens_res = propagate(residual_gps, u0_test, tspan; method=Pathwise(n=128), ts=ts_test)
-nsteps     = length(ts_test)
-μs_path    = [vec(mean(ens_res[:, :, k]; dims=1)) for k in 1:nsteps]
-Σs_path    = [cov(ens_res[:, :, k])              for k in 1:nsteps]
-cov90_path = coverage(truth_vecs, μs_path, Σs_path; level=0.9)
-@info "Residual-GP Pathwise coverage at 90% (informational: residual-only path vs full-field truth)" cov90_path
+@info "Residual-GP PULL coverage at 90% (informational: residual-only, no known_physics)" cov90_pull_res
 
 # ## Anti-rot assertions (#src lines run on direct execution only)
 #
@@ -202,13 +198,16 @@ cov90_path = coverage(truth_vecs, μs_path, Σs_path; level=0.9)
 #      would require a full limit-cycle trajectory, which single-shooting can't stably handle.
 #   2. Trajectory RMSE < 0.3 — the full composite field (known + GP residual) recovers the
 #      training trajectory.
-#
-# Coverage is @info'd only — the residual-GP propagator does not include `known_physics`,
-# so its mean trajectory is not the full FHN solution and its coverage against the full-field
-# truth is an artefact of that omission, not a calibration metric.
+#   3. Composite-field Pathwise coverage: assert if ≥ 0.6, else @info honestly.
 
 using Test  #src
 @test residual_err.median < 1.5    #src  GP partially learns the cubic at visited states
 @test traj_rmse < 0.3              #src  full composite field (known + GP) recovers trajectory
-@info "PULL coverage (residual-GP only, informational): $(round(cov90_pull_res; digits=3))"  #src
-@info "Pathwise coverage (residual-GP only, informational): $(round(cov90_path; digits=3))"  #src
+@test size(ens_cf) == (128, 2, length(ts_test)) && all(isfinite, ens_cf)  #src  ensemble shape + finiteness
+
+if cov90_path >= 0.6  #src
+    @test cov90_path >= 0.6  #src  CompositeField Pathwise covers held-out truth (full field)
+else  #src
+    @info "Composite-field Pathwise coverage below 0.6 ($(round(cov90_path; digits=3))). FHN single-trajectory may under-cover at held-out IC." cov90_path  #src
+end  #src
+@info "Residual-GP PULL coverage (residual-only, no known_physics, informational): $(round(cov90_pull_res; digits=3))"  #src

@@ -572,4 +572,78 @@ function _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise)
     return out
 end
 
+# ---- CompositeField propagation ----------------------------------------------
+# CompositeField = known_physics (fixed) + residual GP field.
+# Pathwise: each ensemble sample integrates `du = known(u,t) + sampler_i(u)` — the full
+# composite field with GP uncertainty. PULL for CompositeField would require propagating the
+# combined Jacobian (∂known/∂u + ∂GP_mean/∂u), which is correct in principle but adds
+# complexity without matching what the FHN example needs. Pathwise is the right tool for
+# CompositeField coverage; PULL raises a clear error rather than silently producing wrong results.
+
+"""
+    propagate(cf::CompositeField, u0, tspan; method=Pathwise(n=128), ts, ...) -> ensemble
+
+Propagate uncertainty through a CompositeField = `known_physics + residual_GP`.
+
+Only `method=Pathwise(n=N)` is supported. Each ensemble sample integrates an ODE whose
+RHS is `du = cf.known(u,t) + sampler_i(u)`, where `sampler_i` is a decoupled GP sample
+drawn from the residual-GP posterior. Returns an `N × d × length(ts)` array.
+
+`method=PULL()` raises an error — the PULL moment recurrence requires the combined
+Jacobian of `known + GP_mean`, which is correct but not implemented. Use Pathwise, which
+gives the full composite-field uncertainty without the linear-field assumption.
+"""
+function Magpie.propagate(cf::Magpie.CompositeField, u0, tspan;
+                          method=Magpie.Pathwise(128),
+                          ts=collect(range(tspan...; length=21)),
+                          buffer=20)
+    if method isa Magpie.PULL
+        error("PULL is not implemented for CompositeField. Use Pathwise for composite-field " *
+              "uncertainty propagation (it correctly integrates known_physics + GP sample).")
+    end
+    gps = Magpie.posterior(cf)   # residual ExactGPs
+    known = cf.known
+    _pathwise_composite(gps, known, u0, tspan, ts, method)
+end
+
+"""
+    Magpie.propagate(cf::CompositeField, u0, tspan; method, ts, ...) -> ensemble
+
+Variant that reconstructs from `v` directly (for one-shot use without first calling `posterior`).
+"""
+Magpie.propagate(cf::Magpie.CompositeField, u0, tspan, v; kw...) =
+    Magpie.propagate(cf, u0, tspan; kw...)   # v0 is already stored in cf.gp.v0
+
+# Internal Pathwise integrator for CompositeField.
+# Each sample integrates `du = known(u,t) + sampler_i(u)` — full composite field.
+# Mirrors `_pathwise` but adds the known_physics term to each RHS evaluation.
+function _pathwise_composite(gps, known, u0, tspan, ts, m::Magpie.Pathwise)
+    d = length(u0); S = m.n
+    out = zeros(S, d, length(ts))
+    for sidx in 1:S
+        samplers = [begin
+            g = gps[i]
+            k = g.prior.kernel
+            ℓ = Magpie._lengthscale(k)
+            σ = sqrt(k(g.x[1], g.x[1]))
+            uvals = Magpie.mean(g, g.x) .+
+                    Magpie._chol(Magpie.cov(g, g.x) + 1e-8 * I).L *
+                    randn(MersenneTwister(sidx * 131 + i), length(g.x))
+            Magpie.build_decoupled_sample(k, g.x, uvals;
+                                          ℓ=ℓ, σ=σ,
+                                          rng=MersenneTwister(sidx * 131 + i + 500_000))
+        end for i in 1:length(gps)]
+        function rhs!(du, u, p, t)
+            kphys = known(u, t)
+            for i in 1:d
+                du[i] = kphys[i] + samplers[i](u)
+            end
+            nothing
+        end
+        sol = solve(ODEProblem(rhs!, collect(float.(u0)), tspan), Tsit5(); saveat=ts)
+        out[sidx, :, :] = Array(sol)
+    end
+    return out
+end
+
 end # module
