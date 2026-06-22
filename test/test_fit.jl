@@ -25,3 +25,22 @@ end
     @test 5.0 < _outputscale(g.prior.kernel) < 125.0    # recovered within a factor ~5 of truth
     @test nlml(g) ≤ nlml(g0) + 1e-6
 end
+
+@testset "fit lengthscale prior curbs small-n over-smoothing" begin
+    # Fine features undersampled: sinpi(3x) (half-period ~1/3) probed at only 7 points over
+    # [-1,1] (spacing ~1/3, right at the feature scale). Pure MLE can't resolve the oscillation,
+    # so it explains the data with a near-flat surface and runs ℓ to the upper bound (~e^6) —
+    # catastrophic over-smoothing. The :auto prior (centred on the init ℓ=0.2) holds ℓ near the
+    # true feature scale instead. Stable across seeds; the gap is enormous (ratio ~1e-3).
+    Random.seed!(7)
+    f(x) = sinpi(3x[1])
+    X = [[x] for x in range(-1, 1; length=7)]        # very scarce, undersamples the feature
+    y = f.(X) .+ 1e-3 .* randn(length(X))
+    g0 = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.2); noise=1e-3), X, y)
+    g_map = fit(g0)                                  # default prior on (ℓ_prior=:auto)
+    g_mle = fit(g0; ℓ_prior=nothing)                 # pure MLE
+    ℓmap = _lengthscale(g_map.prior.kernel); ℓmle = _lengthscale(g_mle.prior.kernel)
+    @test ℓmap < 0.5 * ℓmle                          # robust margin (actual ratio ~1e-3)
+    @test ℓmap < 1.0                                 # MAP resolves the feature
+    @test ℓmle > 2.0                                 # MLE ran ℓ up — over-smoothed
+end

@@ -30,36 +30,56 @@ function nlml(g::ExactGP)
 end
 
 """
-    fit(g::ExactGP; restarts=1, ad=AutoForwardDiff()) -> ExactGP
+    fit(g::ExactGP; restarts=1, ad=AutoForwardDiff(), ℓ_prior=:auto) -> ExactGP
 
 Optimize the kernel lengthscale `ℓ` and signal variance `σ_f²` by minimizing
-[`nlml`](@ref) with LBFGS, returning a GP re-conditioned at the best hyperparameters.
+[`nlml`](@ref) (plus a lengthscale prior; see below) with LBFGS, returning a GP
+re-conditioned at the best hyperparameters.
 
 Optimization runs in log-space (`[logℓ, logσ²]`, bounded to `[-6, 6]`) so both stay
 positive. The recovered kernel is `σ_f²·with_lengthscale(SqExponentialKernel(), ℓ)`.
 Fitting `σ_f²` (not just `ℓ`) calibrates the function scale, which the derivative/straddle
 acquisitions need — a unit-variance prior miscalibrates them on any non-unit-scale target.
 With `restarts > 1`, extra runs start from the initial point jittered in log-space and the
-lowest-NLML result wins. `ad` selects the DifferentiationInterface backend for the gradient.
+result with the lowest **penalized** objective wins. `ad` selects the DifferentiationInterface
+backend for the gradient.
+
+## Lengthscale prior (MAP, default on)
+
+`fit` is MAP, not pure MLE: it adds a weakly-informative Gaussian prior on `logℓ` to the
+objective, `0.5·((logℓ − μ)/σ)²`. **`ℓ_prior=:auto`** (the default) centres that prior on the
+**initial lengthscale** of `g`'s kernel with width `σ=0.75` (log units), i.e. *refine the
+lengthscale you specified, don't run away from it.* This matters when data is scarce: pure MLE
+drives `ℓ` **up** (a flat surface explains few points cheaply), over-smoothing away the very
+features (wells, saddles) one is hunting — verified to collapse critical-point recovery at small
+`n`. The initial `ℓ` you chose encodes the feature scale you expect, so anchoring to it (softly)
+keeps `fit` well-behaved. With enough data the likelihood dominates the prior and recovers the
+data-driven `ℓ` as usual.
+
+Pass `ℓ_prior=(μ, σ)` to set the prior centre/width in log-space explicitly, or
+`ℓ_prior=nothing` for pure MLE (the pre-MAP behaviour). `σ_f²` is never penalized.
 
 !!! note
     v1 assumes the prior kernel is a (scaled) `with_lengthscale(SqExponentialKernel(), ℓ)`.
 """
-function fit(g::ExactGP; restarts::Int=1, ad=AutoForwardDiff())
+function fit(g::ExactGP; restarts::Int=1, ad=AutoForwardDiff(), ℓ_prior=:auto)
     @assert _basekernel(g.prior.kernel) isa SqExponentialKernel "v1 fit assumes a (scaled) with_lengthscale(SqExponentialKernel(), ℓ)"
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
     noise = g.noise; meanfn = g.prior.mean
-    p0 = [log(_lengthscale(g.prior.kernel)), log(_outputscale(g.prior.kernel))]
+    logℓ0 = log(_lengthscale(g.prior.kernel))
+    p0 = [logℓ0, log(_outputscale(g.prior.kernel))]
+    pri = ℓ_prior === :auto ? (logℓ0, 0.75) : ℓ_prior            # (μ, σ) on logℓ, or nothing
+    penalty(p) = pri === nothing ? zero(eltype(p)) : 0.5 * ((p[1] - pri[1]) / pri[2])^2
     # p = [logℓ, logσ²]; closure stays AD-compatible (no ParameterHandling unflatten).
     mkkernel(p) = exp(p[2]) * with_lengthscale(SqExponentialKernel(), exp(p[1]))
-    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise=noise, mean=meanfn), X, y))
-    best = g; best_nlml = nlml(g)
+    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise=noise, mean=meanfn), X, y)) + penalty(p)
+    obj(p) = loss(p, nothing)
+    best = g; best_obj = obj(p0)                                      # penalty(p0)=0 for :auto
     for r in 1:restarts
         start = r == 1 ? p0 : p0 .+ 0.1 .* randn(2)              # first run exact, rest jittered
         prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb=[-6.0, -6.0], ub=[6.0, 6.0])
         sol = solve(prob, LBFGS())
-        gp_cand = update(ExactGP(mkkernel(sol.u); noise=noise, mean=meanfn), X, y)
-        if nlml(gp_cand) < best_nlml; best, best_nlml = gp_cand, nlml(gp_cand); end
+        obj(sol.u) < best_obj && ((best, best_obj) = (update(ExactGP(mkkernel(sol.u); noise=noise, mean=meanfn), X, y), obj(sol.u)))
     end
     return best
 end
