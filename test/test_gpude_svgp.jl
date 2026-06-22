@@ -169,6 +169,54 @@ end
 # SVGP var ≈ ExactGP var (the ε² term is < 1e-29, negligible).
 # Achieved: mean error ≲ 1e-15 (machine eps); var error ≲ 1e-15.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Task 7b — tight oracle for the variational-correction term ‖L_S' A‖²
+#
+# Uses a NON-trivial L_S so the correction term is nonzero and checked against
+# a direct independent computation. The M=N (L_S≈0) oracle never exercises this path.
+# Formula: σ² = k(u,u) − dot(A,A) + sum(abs2, L_S'*A),  A = L_ZZ \ k(Z,u)
+# ---------------------------------------------------------------------------
+@testset "Task 7b: svgp_moments variational-correction term (non-trivial L_S, rtol=1e-10)" begin
+    rng = MersenneTwister(17)
+    M   = 4
+    kernel = _kernel(0.0, 0.0)   # ℓ=1, σ=1 (same as Task 4.1)
+    prior  = AbstractGPs.GP(kernel)
+
+    Z = [[z] for z in range(-1.5, 1.5; length=M)]
+    L_ZZ = L_ZZ_factor(prior, Z)   # default jitter=1e-4
+
+    # Non-trivial L_S: diagonal 0.5 + small random off-diagonal entries
+    L_S_mat = zeros(M, M)
+    for j in 1:M, i in j:M
+        L_S_mat[i,j] = (i == j) ? 0.5 : 0.05 * randn(rng)
+    end
+    L_S = LowerTriangular(L_S_mat)
+
+    # Variational mean (arbitrary α)
+    α = randn(rng, M)
+
+    u = [0.4]   # single off-inducing test point
+
+    # Call svgp_moments
+    μ_star, σ2 = svgp_moments(prior, Z, L_ZZ, α, L_S, u)
+
+    # Independent reference computation
+    kZu      = vec(AbstractGPs.cov(prior, Z, [u]))
+    A        = L_ZZ \ kZu
+    correction = sum(abs2, L_S' * A)
+    expected_σ2 = only(AbstractGPs.var(prior, [u])) - dot(A, A) + correction
+
+    # Guard: correction must be genuinely nonzero (not another near-zero case)
+    @test correction > 0.01
+
+    # Tight self-consistency oracle — catches sign flip, wrong factor (L_S vs L_S'), etc.
+    @test σ2 ≈ expected_σ2 rtol=1e-10
+
+    # Mean is unaffected by L_S; sanity-check it too
+    expected_μ = only(AbstractGPs.mean(prior, [u])) + dot(kZu, α)
+    @test μ_star ≈ expected_μ rtol=1e-10
+end
+
 @testset "Task 4.1: SVGP = ExactGP in M=N limit (rtol=1e-6 on mean/var)" begin
     rng = MersenneTwister(1)
     N = 6
