@@ -13,9 +13,16 @@
 #      much larger errors than a proper ODE solver on the same mean field.
 #   2. **Field error** — GP vector field vs true RHS, on-trajectory and
 #      off-manifold (grid around the limit cycle).
-#   3. **Held-out-IC coverage** — propagate uncertainty (PULL) from a fresh
-#      initial condition and check that the clean trajectory falls inside
-#      the uncertainty band.
+#   3. **Held-out-IC coverage** — propagate uncertainty from a fresh initial
+#      condition and check that the clean trajectory falls inside the band.
+#      Two propagators are compared:
+#        - **PULL** — a cheap analytic moment-matching propagator. Its mean uses a
+#          first-order Euler recurrence, which drifts off the true trajectory on a
+#          nonlinear limit cycle; coverage collapses to ~0. This is a documented
+#          *Euler limitation of PULL*, not a failure of the learned field.
+#        - **Pathwise** — a Monte-Carlo ensemble of decoupled GP samples, each
+#          integrated as a proper ODE. This is the accurate, validated-uncertainty
+#          story; its empirical band actually covers the held-out truth.
 #
 # None of these metrics is in-sample loss.
 
@@ -98,40 +105,66 @@ xlabel!(p1, "t"); ylabel!(p1, "population")
 title!(p1, "LV GP-UDE: mean trajectory (trained on noisy data)")
 savefig(p1, "lv_trajectory.png")
 
-# ## 3. Held-out initial condition — PULL uncertainty propagation + coverage
+# ## 3. Held-out initial condition — uncertainty propagation + coverage
+#
+# We propagate uncertainty from a fresh initial condition two ways and compare
+# coverage of the clean held-out trajectory: PULL (cheap analytic, Euler-limited)
+# and Pathwise (Monte-Carlo ensemble of decoupled GP samples).
 
 u0_test   = [1.2, 0.8]   # NOT the training IC
 ts_test   = collect(range(tspan...; length=15))
 
 # Clean ground-truth trajectory from the held-out IC.
 target_test = Array(solve(ODEProblem(lv!, u0_test, tspan), Tsit5(); saveat=ts_test))
+truth_vecs  = [target_test[:, i] for i in 1:length(ts_test)]
 
-# PULL propagation from the held-out IC — uncertainty only (mean is Euler, not ODE quality).
+# ### 3a. PULL — cheap analytic propagation (Euler-limited on nonlinear horizons)
+#
+# PULL's mean is a first-order Euler recurrence; on the LV limit cycle it drifts
+# from the true trajectory, so coverage collapses to ~0. Kept as a documented
+# contrast, NOT as the validated-uncertainty story.
 μs_test, Σs_test = propagate(gps, u0_test, tspan; method=PULL(), ts=ts_test)
+cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level=0.9)
 
-# Convert to vector-of-vectors for coverage (Mahalanobis χ² ellipsoid).
-truth_vecs = [target_test[:, i] for i in 1:length(ts_test)]
-cov90 = coverage(truth_vecs, μs_test, Σs_test; level=0.9)
+@info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
 
-@info "Held-out-IC PULL coverage at 90% nominal" cov90
+# ### 3b. Pathwise — Monte-Carlo ensemble of decoupled GP samples (REAL validation)
+#
+# Each of `n` samples is a decoupled GP draw integrated as a proper ODE, so the
+# ensemble carries the field's uncertainty *without* PULL's Euler drift.
+# `propagate(...; method=Pathwise(n=N))` returns an `N × d × |ts|` array.
+ens = propagate(gps, u0_test, tspan; method=Pathwise(n=128), ts=ts_test)
 
-# ## 4. Plot: PULL uncertainty band from held-out IC
+# Per-step empirical mean + covariance from the ensemble, then reuse the same
+# Mahalanobis-χ² `coverage` as PULL (apples-to-apples at 90% nominal).
+nsteps      = length(ts_test)
+μs_path     = [vec(mean(ens[:, :, k]; dims=1)) for k in 1:nsteps]        # d-vector per step
+Σs_path     = [cov(ens[:, :, k]) for k in 1:nsteps]                     # d×d per step (samples in rows)
+cov90_path  = coverage(truth_vecs, μs_path, Σs_path; level=0.9)
 
-μmat_test = reduce(hcat, μs_test)   # 2 × |ts_test|
-σs_test   = [sqrt.(max.(diag(Σ), 0.0)) for Σ in Σs_test]
-σmat_test = reduce(hcat, σs_test)   # 2 × |ts_test|
+@info "Held-out-IC Pathwise coverage at 90% nominal (ensemble, validated)" cov90_path
+
+# ## 4. Plot: Pathwise ensemble band over the clean held-out trajectory
+#
+# 5th–95th percentile envelope (90% band) per dimension across the n samples,
+# overlaid on the clean held-out truth. This is the band whose coverage is
+# reported above as `cov90_path`.
+
+prey_lo = [quantile(ens[:, 1, k], 0.05) for k in 1:nsteps]
+prey_hi = [quantile(ens[:, 1, k], 0.95) for k in 1:nsteps]
+pred_lo = [quantile(ens[:, 2, k], 0.05) for k in 1:nsteps]
+pred_hi = [quantile(ens[:, 2, k], 0.95) for k in 1:nsteps]
+μmat_path = reduce(hcat, μs_path)   # 2 × |ts_test|
 
 p2 = plot(ts_test, target_test[1,:], label="prey (clean, held-out IC)", lw=2, c=:blue)
 plot!(p2, ts_test, target_test[2,:], label="pred (clean, held-out IC)", lw=2, c=:red)
-plot!(p2, ts_test, μmat_test[1,:], label="prey μ (PULL)", lw=2, c=:blue, ls=:dash)
-plot!(p2, ts_test, μmat_test[2,:], label="pred μ (PULL)", lw=2, c=:red,  ls=:dash)
-# ±2σ bands (using marginal std from PULL covariances)
-plot!(p2, ts_test, μmat_test[1,:] .+ 2 .* σmat_test[1,:], fillrange=μmat_test[1,:] .- 2 .* σmat_test[1,:],
-      alpha=0.15, c=:blue, label="prey μ±2σ", lw=0)
-plot!(p2, ts_test, μmat_test[2,:] .+ 2 .* σmat_test[2,:], fillrange=μmat_test[2,:] .- 2 .* σmat_test[2,:],
-      alpha=0.15, c=:red, label="pred μ±2σ", lw=0)
+plot!(p2, ts_test, μmat_path[1,:], label="prey μ (Pathwise)", lw=2, c=:blue, ls=:dash)
+plot!(p2, ts_test, μmat_path[2,:], label="pred μ (Pathwise)", lw=2, c=:red,  ls=:dash)
+# 5–95% Pathwise envelopes.
+plot!(p2, ts_test, prey_hi, fillrange=prey_lo, alpha=0.15, c=:blue, label="prey 5–95%", lw=0)
+plot!(p2, ts_test, pred_hi, fillrange=pred_lo, alpha=0.15, c=:red,  label="pred 5–95%", lw=0)
 xlabel!(p2, "t"); ylabel!(p2, "population")
-title!(p2, "LV GP-UDE: held-out-IC PULL uncertainty band")
+title!(p2, "LV GP-UDE: held-out-IC Pathwise ensemble band (90%)")
 savefig(p2, "lv_trajectory_coverage.png")
 
 # ## Anti-rot assertions (#src lines run on direct execution only)
@@ -144,4 +177,9 @@ savefig(p2, "lv_trajectory_coverage.png")
 using Test  #src
 @test metrics.traj_rmse < 0.15   #src  ODE integration of GP mean vs clean truth
 @test metrics.field_err_visited.median < 0.5   #src  on-trajectory field error
-@info "Held-out-IC coverage at 90% nominal: $(round(cov90; digits=3)). PULL over nonlinear LV — Euler mean diverges from true trajectory; coverage may be off."  #src
+# PULL coverage is @info'd only — its Euler mean drifts off the LV limit cycle, so a
+# low/zero coverage is a documented PULL limitation, not a correctness bug.            #src
+@info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits=3)) (Euler-limited; documented contrast)."  #src
+# Pathwise is the real validated-uncertainty gate: the decoupled-sample ensemble        #src
+# integrated as proper ODEs should actually cover the clean held-out trajectory.        #src
+@test cov90_path ≥ 0.6   #src  Pathwise ensemble coverage at 90% nominal (validated uncertainty)
