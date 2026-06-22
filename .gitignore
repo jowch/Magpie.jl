@@ -38,3 +38,7 @@ JuliaLocalPreferences.toml
 
 # local planning specs / SDD ledger (not for public repo)
 .superpowers/
+
+# generated example plots (regenerated on docs/example runs)
+*_trajectory*.png
+*_coverage*.png
