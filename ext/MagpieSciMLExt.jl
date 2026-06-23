@@ -54,7 +54,7 @@ end
 # --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
 
 """
-    field_rhs(cf::CompositeField, v) -> (pf, rhs!)
+    field_rhs(cf::CompositeField, v) -> (pf, rhs!, uvar)
 
 Build the CompositeField RHS: delegates α/Cholesky to the inner GP field's `field_rhs` and
 wraps the returned closure so it does `du .= cf.known(u,t)` FIRST, then adds the GP residual.
@@ -76,7 +76,7 @@ function field_rhs(cf::Magpie.CompositeField, v)
 end
 
 """
-    field_rhs(field::ExactGPField, v) -> rhs!
+    field_rhs(field::ExactGPField, v) -> (pf, rhs!, uvar)
 
 Build the ExactGPField RHS at trained params `v`: solves `α = (K_ZZ + σ_n² I)⁻¹ w` in-loss
 (via `solve_alpha`, so `∂α/∂θ` stays alive), threads `α` into `pf = [logℓ, logσ, vec(α)]`, and
@@ -93,7 +93,7 @@ function field_rhs(field::ExactGPField, v)
 end
 
 """
-    field_rhs(field::SVGPField, v) -> (pf, rhs!)
+    field_rhs(field::SVGPField, v) -> (pf, rhs!, uvar)
 
 Build the SVGPField RHS at trained params `v`: forms the ONE shared-Z Cholesky `L_ZZ` in-loss
 (relative jitter `field.jitter·σ²`), solves `α = L_ZZ'\\μ`, threads `Z` (trainable) and `α` into
