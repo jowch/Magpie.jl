@@ -202,5 +202,5 @@ end
     @test all(isposdef, Σs[2:end])
     cov90 = coverage(truth, μs, Σs; level = 0.9)
     @info "SparseGP PULL coverage" cov90
-    @test 0.5 ≤ cov90 ≤ 1.0                            # quantitative oracle, not just finiteness
+    @test 0.95 ≤ cov90 ≤ 1.0                           # tightened: deterministic (Random.seed!(9)) cov90 = 1.0
 end
