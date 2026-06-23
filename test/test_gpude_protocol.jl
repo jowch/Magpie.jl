@@ -1,5 +1,5 @@
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Statistics, Test
-using Magpie: CompositeField, ExactGPField, FieldLayout, gpfield, solve_alpha, predmean
+using Magpie: CompositeField, ExactGPField, FieldLayout, gpfield, solve_alpha, predmean, train!, posterior
 using OrdinaryDiffEq, SciMLSensitivity
 import DifferentiationInterface as DI
 import Mooncake
@@ -121,6 +121,18 @@ end
     @test abs(m2) < 1.0e-10
 end
 
+@testset "train! returns the mutated field (single return value)" begin
+    rng = MersenneTwister(4)
+    u0 = [1.0]; tspan = (0.0, 2.0); ts = collect(range(tspan...; length = 10))
+    X = Array(solve(ODEProblem((du, u, p, t) -> (du[1] = -0.5u[1]), u0, tspan), Tsit5(); saveat = ts))
+    Z = [[x] for x in range(0.2, 1.0; length = 4)]
+    field = ExactGPField(SqExponentialKernel(), Z; d = 1)
+    ret = train!(field, (ts, X); adam_iters = 20, maxiters = 10)
+    @test ret === field                                   # returns the same field, not a tuple
+    # field.v0 holds the trained vector: the 1-arg posterior (reads field.v0) matches the explicit form.
+    @test predmean(posterior(field)[1], [0.5]) ≈ predmean(posterior(field, field.v0)[1], [0.5])
+end
+
 @testset "CompositeField protocol: train! + trajectory RMSE + residual field_error" begin
     # Full training gate: trajectory RMSE (hard) + residual field_error (advisory / loose).
     # Per identifiability rule: single trajectory does NOT identify the field pointwise in general.
@@ -150,8 +162,8 @@ end
     cf = CompositeField(local_known, inner)
 
     loss0 = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])(cf.v0)
-    cf, vopt = Magpie.train!(cf, (ts, target); tspan, adam_iters = 300, maxiters = 100, λ = 1 / (20 * 2))
-    lossT = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])(vopt)
+    Magpie.train!(cf, (ts, target); tspan, adam_iters = 300, maxiters = 100, λ = 1 / (20 * 2))
+    lossT = ext.field_loss(cf, Magpie.SingleShooting(), [(ts, target)])(cf.v0)
 
     @info "CompositeField train!" loss0 lossT
     @test lossT < loss0   # training reduced the loss
@@ -160,7 +172,7 @@ end
     # Previously computed as sqrt(lossT/(N*d)) which INCLUDED the regularizer term,
     # i.e. sqrt((data_mse + reg)/(N*d)), not true trajectory RMSE.
     # Fix: integrate at vopt and compute sqrt(mean(abs2, Array(sol) .- target)).
-    pf_opt, rhs_opt! = ext.field_rhs(cf, vopt)
+    pf_opt, rhs_opt! = ext.field_rhs(cf, cf.v0)
     sol_opt = solve(
         ODEProblem((du, u, p, t) -> rhs_opt!(du, u, p, t), u0, tspan, pf_opt),
         Tsit5(); saveat = ts
@@ -171,7 +183,7 @@ end
     @test sol_rmse < 0.5   # trajectory recovery (conservative threshold)
 
     # (b) Residual field error at visited states (advisory / loose)
-    gps = Magpie.posterior(cf, vopt)
+    gps = Magpie.posterior(cf)
     @test length(gps) == 2      # posterior IS the residual GP
 
     pts = [target[:, i] for i in 1:size(target, 2)]

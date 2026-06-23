@@ -78,8 +78,8 @@ end
     X .+= 0.02 .* randn(rng, size(X))
     Z = [collect(c) for c in eachcol(X[:, 1:6])]
     field = ExactGPField(Magpie._kernel(0.0, 0.0), Z; d = 1)
-    _, vfit = train!(field, (ts, X); shooting = MultipleShooting(nsegments = 4), adam_iters = 300, maxiters = 80)
-    @test all(isfinite, vfit)
+    train!(field, (ts, X); shooting = MultipleShooting(nsegments = 4), adam_iters = 300, maxiters = 80)
+    @test all(isfinite, field.v0)
     gps = posterior_gps(field)
     μs, _ = propagate(gps, u0, tspan; method = PULL(), ts = ts)
     rmse = sqrt(mean(sum(abs2, μs[k] .- X[:, k]) for k in 1:length(ts)))

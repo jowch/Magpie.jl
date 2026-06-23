@@ -10,11 +10,12 @@ import Mooncake
     target = Array(solve(ODEProblem((u, p, t) -> [truef(u[1])], u0, tspan), Tsit5(); saveat = ts))
     field = Magpie.ExactGPField(SqExponentialKernel(), Z; d = 1)
     loss0 = ext.make_loss(field, u0, tspan, ts, target)(field.v0)
-    field, vopt = Magpie.train!(field, (ts, target); tspan, adam_iters = 50, maxiters = 50)  # small iters: mechanism gate, not full recovery
-    lossT = ext.make_loss(field, u0, tspan, ts, target)(vopt)
+    Magpie.train!(field, (ts, target); tspan, adam_iters = 50, maxiters = 50)  # small iters: mechanism gate, not full recovery
+    lossT = ext.make_loss(field, u0, tspan, ts, target)(field.v0)
     @info "train!" loss0 lossT
     @test lossT < loss0                                   # training reduced the loss
-    gps = Magpie.posterior_gps(field, vopt)   # PUBLIC path (not ext.posterior_gps) — guards the qualified-extension fix
+    gps = Magpie.posterior_gps(field)   # PUBLIC path (not ext.posterior_gps) — guards the qualified-extension fix
+    vopt = field.v0
     pf = vcat(vopt[1], vopt[2], vec(Magpie.solve_alpha(field, vopt[1], vopt[2], field.lognoise, Magpie.wmat(Magpie.FieldLayout(10, 1), vopt))))
     @test Magpie.predmean(gps[1], [0.5]) ≈ Magpie.gpfield(field, [0.5], pf)[1] rtol = 1.0e-8
 end

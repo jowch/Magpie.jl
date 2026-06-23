@@ -36,11 +36,11 @@ end
     target = Array(solve(ODEProblem((u, p, t) -> [truef(u[1])], u0, tspan), Tsit5(); saveat = ts))
     field = ExactGPField(SqExponentialKernel(), Z; d = 1)
     loss0 = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
-    field, vopt = Magpie.train!(field, (ts, target); tspan, adam_iters = 30, maxiters = 10)
-    lossT = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(vopt)
+    Magpie.train!(field, (ts, target); tspan, adam_iters = 30, maxiters = 10)
+    lossT = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
     @info "B-smoke" loss0 lossT
     @test lossT < loss0                               # train! actually descended (optimizer-driver wiring works)
-    gps = Magpie.posterior_gps(field, vopt)
+    gps = Magpie.posterior_gps(field)
     @test length(gps) == 1                            # posterior reconstruction works
     @test isfinite(Magpie.predmean(gps[1], [0.5]))    # reconstructed field is callable
 end

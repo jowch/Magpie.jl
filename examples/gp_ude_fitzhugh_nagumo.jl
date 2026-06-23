@@ -16,8 +16,8 @@
 #
 # Recovery is checked three honest ways:
 #
-#   1. **Residual field error** — `field_error(posterior(cf, vopt), residual_truefield, pts)`.
-#      `posterior(cf, vopt)` returns the RESIDUAL GPs; we compare against `[-v³/3, 0]`
+#   1. **Residual field error** — `field_error(posterior(cf), residual_truefield, pts)`.
+#      `posterior(cf)` returns the RESIDUAL GPs; we compare against `[-v³/3, 0]`
 #      at visited training states. **This is the headline check** that the old example omitted.
 #   2. **Trajectory RMSE** — integrate the full composite field (known + GP residual) as an
 #      ODE and compare against the clean truth.
@@ -79,11 +79,11 @@ cf = CompositeField(fhn_known, inner)
 # ## Train on noisy data
 
 # `λ=1/(25*2)` is a weak log-ℓ prior centred at 0 with std 0.5.
-cf, vopt = train!(cf, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (25 * 2))
+train!(cf, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (25 * 2))
 
 # ## 1. Residual field error — the headline check
 #
-# `posterior(cf, vopt)` returns the RESIDUAL GPs (the trained part only; known physics is fixed).
+# `posterior(cf)` returns the RESIDUAL GPs (the trained part only; known physics is fixed).
 # We compare the posterior residual mean against the true cubic `[-v³/3, 0]` at visited states.
 #
 # The GP IS learning the cubic over the visited v-range `(-1.9, -1.0)`. Median residual error
@@ -92,7 +92,7 @@ cf, vopt = train!(cf, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (25 * 2))
 # pointwise recovery would require a full limit-cycle trajectory (period ≈ 40 s; single-shooting
 # at that horizon is numerically unstable).
 
-residual_gps = posterior(cf, vopt)
+residual_gps = posterior(cf)
 
 visited_pts = [target[:, i] for i in 1:size(target, 2)]
 residual_err = field_error(residual_gps, residual_true, visited_pts)
@@ -108,7 +108,7 @@ zero_gp_baseline = median(norm(residual_true(z)) for z in visited_pts)
 # ## 2. Trajectory RMSE — integrate the full composite field (known + GP)
 #
 # For the trajectory metric, we need the FULL composite field: `known(u,t) + GP(u)`.
-# We reconstruct it by solving the ODE with both parts active via `field_rhs(cf, vopt)`.
+# We reconstruct it by solving the ODE with both parts active via `field_rhs(cf, cf.v0)`.
 #
 # NOTE: `field_rhs` is an UNEXPORTED extension internal (the in-loss RHS builder). There is
 # not yet a public composite mean-trajectory integrator — `posterior(cf)` returns only the
@@ -116,7 +116,7 @@ zero_gp_baseline = median(norm(residual_true(z)) for z in visited_pts)
 # Reaching into the extension here is the supported reconstruction path pending a public one.
 
 ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-pf_opt, rhs_opt! = ext.field_rhs(cf, vopt)
+pf_opt, rhs_opt! = ext.field_rhs(cf, cf.v0)
 sol_full = Array(
     solve(
         ODEProblem((du, u, p, t) -> rhs_opt!(du, u, p, t), u0, tspan, pf_opt),

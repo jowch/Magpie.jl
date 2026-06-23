@@ -58,7 +58,8 @@ ext = Base.get_extension(Magpie, :MagpieSciMLExt)
 
 Random.seed!(1)
 field_ref = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = 0.0)
-field_ref, vopt = train!(field_ref, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
+train!(field_ref, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
+vopt = field_ref.v0
 
 @info "Reference optimum" logℓ = round(vopt[1]; digits = 3) logσ = round(vopt[2]; digits = 3)
 
@@ -113,13 +114,13 @@ SEED_INITS = [(1, 0.0), (10, 1.5), (17, 0.3)]   # (seed, logℓ₀)
 _train_seed(seed, logℓ0) = begin
     Random.seed!(seed)
     f = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = logℓ0)
-    f, v = train!(f, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
+    train!(f, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
     # Trajectory RMSE: integrate GP mean field vs clean truth (same metric as the LV example).
-    gps = posterior_gps(f, v)
+    gps = posterior_gps(f)
     gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
     sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
     traj_rmse = sqrt(sum(abs2, sol_gp .- target) / length(target))
-    (v = v, gps = gps, traj_rmse = traj_rmse)
+    (v = f.v0, gps = gps, traj_rmse = traj_rmse)
 end
 
 @info "Training 3 seeds (weak regulariser)..."

@@ -327,6 +327,8 @@ _train_init(cf::Magpie.CompositeField, trajs, shooting) =
 
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
+# Mutates `field.v0` in place (for `CompositeField`, the inner `gp.v0`) and returns the same `field`
+# for chaining. The trained parameters live in `field.v0`; there is no separate return vector.
 function Magpie.train!(
         field::GPField, data;
         shooting = Magpie.SingleShooting(),
@@ -346,7 +348,7 @@ function Magpie.train!(
     end
     sol = Optimization.solve(Optimization.OptimizationProblem(optf, v), optimizer; maxiters)
     field.v0 .= sol.u[1:length(field.v0)]          # store FIELD prefix; drop s0 for MultipleShooting
-    return field, sol.u
+    return field
 end
 
 # ---------------------------------------------------------------------------

@@ -66,11 +66,11 @@ field = ExactGPField(SqExponentialKernel(), Z; d = 2)
 
 # `λ=1/(15*2)` is a weak log-ℓ prior centred at 0 with std 0.5.
 # We train on `Xnoisy` — the field must learn through noise, not a clean signal.
-field, vopt = train!(field, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (15 * 2), s = 0.5)
+train!(field, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (15 * 2), s = 0.5)
 
 # ## Posterior GPs
 
-gps = posterior_gps(field, vopt)
+gps = posterior_gps(field)
 
 # ## 1. Trajectory RMSE — ODE integration of the GP mean field vs clean truth
 #

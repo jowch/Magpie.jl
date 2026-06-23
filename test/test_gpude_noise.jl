@@ -23,11 +23,11 @@ using Magpie: ExactGPField, SVGPField, unpack, train!
 
     Z = [[x] for x in range(-1, 3; length = 12)]
     field = ExactGPField(SqExponentialKernel(), Z; d = 1)
-    field, vopt = train!(
+    train!(
         field, (ts, Xnoisy); tspan, adam_iters = 800, maxiters = 200,
         λ = 1 / (15), s = 0.5
     )
-    σ_obs = exp(unpack(field, vopt).logσ_obs[1])
+    σ_obs = exp(unpack(field, field.v0).logσ_obs[1])
     @info "σ_obs recovery (Exact)" σtrue σ_obs ratio = σ_obs / σtrue
     @test 0.5 * σtrue < σ_obs < 2.0 * σtrue
 end
@@ -44,11 +44,11 @@ end
     M = 8
     Zg = Magpie.kmeans_anchors(clean, M; rng = MersenneTwister(3))
     field = SVGPField(SqExponentialKernel(), Zg; dout = 2)
-    field, vopt = train!(
+    train!(
         field, (ts, Xnoisy); tspan, adam_iters = 800, maxiters = 200,
         λ = 1 / (15 * 2), s = 0.5
     )
-    lo_vec = unpack(field, vopt).logσ_obs            # length-dout vector (dout=2, same noise on both)
+    lo_vec = unpack(field, field.v0).logσ_obs            # length-dout vector (dout=2, same noise on both)
     σ_obs_vec = exp.(lo_vec)
     @info "σ_obs recovery (SVGP)" σtrue σ_obs_vec ratio = σ_obs_vec ./ σtrue
     # SVGP with 8 inducing points on a Lotka–Volterra field will underfit (model bias ≫ σtrue),
@@ -74,7 +74,7 @@ end
     X = copy(Xclean); X[1, :] .+= σ1 .* randn(rng, length(ts)); X[2, :] .+= σ2 .* randn(rng, length(ts))
     Z = [collect(c) for c in eachcol(Xclean[:, 1:8])]
     field = ExactGPField(Magpie._kernel(0.0, 0.0), Z; d = 2)
-    _, vfit = train!(field, (ts, X); shooting = SingleShooting(), adam_iters = 400, maxiters = 100)
+    train!(field, (ts, X); shooting = SingleShooting(), adam_iters = 400, maxiters = 100)
     σobs = exp.(Magpie.unpack(field, field.v0).logσ_obs)
     # Recovered per-dim σ_obs ordering matches the true asymmetry, each within a tight band.
     @test σobs[2] > 2 * σobs[1]                            # dim-2 noisier, clearly separated

@@ -97,7 +97,7 @@ field = SVGPField(SqExponentialKernel(), Z; dout = 2, logℓ0 = log(0.5), logσ0
 # `λ=1/(15*2*length(trajs))` normalises the logℓ prior by total observations.
 # adam_lr=0.01: lower than the default 0.05 — SVGP has many trainable params (Z is trainable)
 # and a conservative step size prevents the optimizer from exploring σ²→0 pathologies.
-field, vopt = train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * length(trajs)), adam_lr = 0.01)
+train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * length(trajs)), adam_lr = 0.01)
 
 # ## Posterior SparseGPs — field recovery check
 #
@@ -113,7 +113,7 @@ field, vopt = train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * len
 # of this example are (1) the ON/OFF contrast — SVGP does not generalise past its support —
 # and (2) the MEASURED O(M³)-vs-O(N³) scaling advantage (see the bench reference above).
 
-sgps = posterior_sparsegps(field, vopt)
+sgps = posterior_sparsegps(field)
 
 # On-support test points: subsample from pooled training states (every 5th column).
 on_pts = [allstates[:, j] for j in 1:5:size(allstates, 2)]
