@@ -401,8 +401,9 @@ function _train_loss(field::ExactGPField, trajs, shooting, tspan; kw...)
     L = FieldLayout(field.n, field.d)
     return build_loss(field, L, u_data, t_data, tspan, shooting; kw...)
 end
-_train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; kw...) =
-    svgp_elbo_loss(field, trajs; tspan, kw...)
+function _train_loss(field::SVGPField, trajs, ::Magpie.SingleShooting, tspan; nsamples::Int = 16, seed::Int = 0, kw...)
+    return svgp_sampled_loss(field, trajs, Magpie.SingleShooting(), tspan; nsamples, seed, kw...)
+end
 
 # CompositeField: forward to field_loss (field_rhs for CompositeField is defined above).
 # The trained-vector layout IS the inner gp's (CompositeField delegates all layout to cf.gp).
@@ -440,12 +441,13 @@ function Magpie.train!(
         shooting = Magpie.SingleShooting(),
         tspan = nothing,
         ad = DI.AutoMooncake(; config = nothing),
-        adam_lr = 0.05, adam_iters = 1000, optimizer = LBFGS(), maxiters = 200, kw...
+        adam_lr = 0.05, adam_iters = 1000, optimizer = LBFGS(), maxiters = 200,
+        nsamples::Int = 16, seed::Int = 0, kw...
     )
     trajs = _as_trajectories(data)
     _assert_shooting_supported(field, shooting)
     tsp = tspan === nothing ? (first(trajs[1][1]), last(trajs[1][1])) : tspan
-    loss = _train_loss(field, trajs, shooting, tsp; kw...)
+    loss = _train_loss(field, trajs, shooting, tsp; nsamples, seed, kw...)
     v_init = _train_init(field, trajs, shooting)
     optf = Optimization.OptimizationFunction((v, _p) -> loss(v), ad)
     v = v_init
@@ -501,11 +503,54 @@ negligible and crashes Mooncake's backward with `SingularException`). Matches
 
 Z is in the param vector (trainable); never closure-captured (R1).
 """
+# ---------------------------------------------------------------------------
+# svgp_sampled_loss: sampled-ELBO loss. Loops S frozen-ε Matheron samples, averages the
+# shooting data terms, then adds the KL regularizer ONCE. `eps` is frozen at construction
+# time (captured in the closure) so the loss is deterministic — identical values on repeated
+# calls with the same `v`, which is required for correct FD gradient checks and LBFGS.
+#
+# uvar=(_->zeros(dout)): no local-trace term inside each sample — variance now comes from
+# the MC average over samples, which is the point of the sampled-ELBO approach.
+# ---------------------------------------------------------------------------
+"""
+    svgp_sampled_loss(field::SVGPField, trajectories, shooting, tspan;
+                      nsamples=16, seed=0, kw...) -> (v -> Real)
+
+Build the sampled-ELBO loss over `nsamples` frozen-ε Matheron samples. The `nsamples`
+RFF noise vectors are drawn once at construction time (antithetic, reproducible via `seed`)
+and captured in the returned closure, making the loss deterministic for repeated calls at
+the same `v`.
+
+Each sample computes `shooting_data_term` with `uvar=(_->zeros(dout))` (no local-trace
+correction — variance comes from the sample average). The KL + prior regularizer is added
+ONCE per `v` outside the sample loop.
+"""
+function svgp_sampled_loss(
+        field::SVGPField, trajectories, shooting, tspan;
+        nsamples::Int = 16, seed::Int = 0, kw...
+    )
+    dout = field.dout
+    eps = Magpie._svgp_sample_eps(field, nsamples; seed)   # frozen at construction
+    return function (v)
+        acc = zero(eltype(v))
+        for e in eps
+            pf, rhs!, _ = svgp_sample_rhs(field, v, e)
+            acc += shooting_data_term(
+                field, shooting, (pf, rhs!), trajectories;
+                logσ_obs = v[3:(2 + dout)], uvar = (_ -> zeros(dout)),
+                _ms_kwargs(field, shooting, v, dout)..., tspan = tspan, kw...
+            )
+        end
+        return acc / length(eps) + Magpie.regularizer(field, v; kw...)
+    end
+end
+
 # Thin wrapper onto the skeleton: SVGP training is single-shooting over `trajectories`.
 # Preserves the exact ELBO (data + KL + logℓ prior) via field_loss → SVGP field_rhs +
 # field-agnostic shooting_data_term + the SVGPField regularizer (KL + logℓ prior, once).
-svgp_elbo_loss(field::SVGPField, trajectories; tspan, kw...) =
-    field_loss(field, Magpie.SingleShooting(), trajectories; tspan = tspan, kw...)
+# Now a thin alias onto svgp_sampled_loss (SingleShooting, nsamples forwarded).
+svgp_elbo_loss(field::SVGPField, trajectories; tspan, nsamples::Int = 16, seed::Int = 0, kw...) =
+    svgp_sampled_loss(field, trajectories, Magpie.SingleShooting(), tspan; nsamples, seed, kw...)
 
 # ---------------------------------------------------------------------------
 # posterior(::SVGPField): reconstruct dout SparseGPs from trained params.
