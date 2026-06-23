@@ -1,14 +1,14 @@
 # # Level-set recovery with Straddle
 #
 # This vignette walks through a complete active-learning experiment:
-# recovering the **unit-circle level set** `f(x) = ‖x‖ − 1 = 0`
+# recovering the **ellipse level set** `f(x) = (x₁/1.6)² + (x₂/0.8)² − 1 = 0`
 # in two dimensions using the Straddle acquisition function.
 
 # ## Setup
 
 ENV["GKSwstype"] = "100"  ## GR headless rendering (no display required)
 
-using Magpie, KernelFunctions, LinearAlgebra, Random
+using Magpie, KernelFunctions, Random
 using Plots; gr()
 
 # ## What is level-set estimation?
@@ -35,18 +35,21 @@ using Plots; gr()
 
 # ## The function and GP model
 #
-# We use the unit-circle signed-distance function as a clean, visual test case.
+# In screening tasks the feasible region is often an anisotropic contour — wider
+# along one control than another — so we let the GP learn a separate lengthscale
+# per axis (ARD).
 
 Random.seed!(42)
 
-f(x) = norm(x) - 1.0   ## signed distance to the unit circle
+## a feasibility boundary that is wider in x₁ than x₂ — different physical scales per axis
+f(x) = (x[1] / 1.6)^2 + (x[2] / 0.8)^2 - 1.0
 
-# Build an `ActiveLearner` with an `ExactGP` (squared-exponential kernel,
-# lengthscale 0.5, small observation noise) and the Straddle acquisition
+# Build an `ActiveLearner` with an `ExactGP` (ARD squared-exponential kernel,
+# one lengthscale per axis, small observation noise) and the Straddle acquisition
 # targeting `h = 0`.
 
 al = ActiveLearner(
-    ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4),
+    ExactGP(with_lengthscale(SqExponentialKernel(), [0.5, 0.5]); noise = 1.0e-4),
     Straddle(h = 0.0),
 )
 
@@ -73,6 +76,11 @@ run!(al, f; budget = 40, over = box, refit_every = 10)
 # ## Results
 
 g = posterior_gp(al)
+
+# The fitted ARD lengthscales reflect the ellipse geometry: the x₁ axis (semi-axis 1.6)
+# gets a longer lengthscale than the x₂ axis (semi-axis 0.8).
+
+@info "recovered ARD lengthscales" ℓ = round.(1 ./ g.prior.kernel.kernel.transform.v; digits = 3)
 
 # ### Figure 1 — posterior mean with true contour and queries
 #
