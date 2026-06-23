@@ -31,7 +31,7 @@ mutable struct ActiveLearner{TX, TY}
 end
 
 # Observation element type implied by the GP kind (extended for multi-output in Phase 1.5).
-_obs_eltype(::ExactGP) = Float64
+_obs_eltype(g::ExactGP) = g.d == 1 ? Float64 : Vector{Float64}
 _obs_eltype(::LaplaceGP) = Bool
 
 # Typed escape hatch: caller fixes the input/value element types.

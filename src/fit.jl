@@ -76,6 +76,8 @@ Pass `ℓ_prior=(μ, σ)` to set the prior centre/width in log-space explicitly,
     (the same set `grad_predict`'s derivative path covers). Throws `ArgumentError` for other families.
 """
 function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
+    g.d == 1 ||
+        throw(ArgumentError("fit currently supports single-output GPs (d=1); got d=$(g.d)."))
     ad === nothing && (ad = _default_ad(g.prior.kernel))
     fam = _kernelfamily(_basekernel(g.prior.kernel))     # validates + returns a fresh base kernel of the same family
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)

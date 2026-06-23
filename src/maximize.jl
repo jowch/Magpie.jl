@@ -85,7 +85,14 @@ Return the input in domain `over` that maximizes acquisition `a` under GP `g`. T
 `maximizer` defaults to a sensible strategy for the domain (enumeration for
 [`Points`](@ref), a grid for low-D [`Box`](@ref)es, [`SobolPolish`](@ref) otherwise).
 """
-acquire(g, a; over, maximizer = default_for(over)) = _acquire(g, a, over, maximizer)
+_outputdim(g) = 1
+_outputdim(g::ExactGP) = g.d
+
+function acquire(g, a; over, maximizer = default_for(over))
+    _outputdim(g) == 1 ||
+        throw(ArgumentError("acquisitions are single-output; got a GP with d=$(_outputdim(g)) outputs."))
+    return _acquire(g, a, over, maximizer)
+end
 
 _argmax_over(g, a, X) = X[argmax([a(g, x) for x in X])]
 _acquire(g, a, p::Points, _) = _argmax_over(g, a, p.X)

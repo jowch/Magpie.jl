@@ -20,6 +20,8 @@ Math: with the posterior mean `μ(x)=m(x)+k(x,X)α`,
 # uses `hessian=false`; the AD Hessian fires only at the handful of extracted candidates.
 """
 function grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool = true)
+    g.d == 1 ||
+        throw(ArgumentError("grad_predict is single-output (d=1); got d=$(g.d). Multi-output derivatives are not supported."))
     d = length(x); k = g.prior.kernel
     pv = _prior_grad_var(k, x)                                       # prior Var[∂ᵢf], length d
     _hasdata(g) || return (zeros(d), pv, hessian ? zeros(d, d) : nothing)

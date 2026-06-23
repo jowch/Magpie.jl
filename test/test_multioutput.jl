@@ -64,3 +64,21 @@ end
     g1 = update(mk(1), X, [sum(x) for x in X])
     @test Magpie.predmean(g1, X[1]) ≈ mean(g1, [X[1]])[1] rtol = 1.0e-12   # d=1 still scalar, matches mean
 end
+
+using Magpie: grad_predict, fit, acquire, Box, ActiveLearner, Straddle, observe!
+
+@testset "scalar-only paths reject d>1" begin
+    Random.seed!(8)
+    X = [randn(2) for _ in 1:6]
+    g2 = update(mk(2), X, [f2(x) for x in X])
+    @test_throws ArgumentError grad_predict(g2, randn(2))
+    @test_throws ArgumentError fit(g2)
+    @test_throws ArgumentError acquire(g2, Straddle(); over = Box([-2.0, -2.0], [2.0, 2.0]))
+end
+
+@testset "ActiveLearner infers multi-output value storage" begin
+    al = ActiveLearner(mk(2), Straddle())
+    @test eltype(al.Ys) == Vector{Float64}             # d=2 → vector-valued observations
+    al1 = ActiveLearner(mk(1), Straddle())
+    @test eltype(al1.Ys) == Float64                    # d=1 unchanged
+end
