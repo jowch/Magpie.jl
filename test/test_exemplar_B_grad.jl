@@ -28,7 +28,7 @@ end
 # train! optimizer driver (ADAM→LBFGS wiring, _init_vec, v0 store-back) + posterior reconstruction — the
 # one product-path piece not otherwise in the DEFAULT suite (full recovery lives in the gated stage1 test).
 # Reuses the Mooncake compile already paid above; a handful of tiny 1D solves, so it stays fast.
-@testset "B-smoke: train! descends + posterior_gps reconstructs (default-suite product-path smoke)" begin
+@testset "B-smoke: train! descends + posterior reconstructs (default-suite product-path smoke)" begin
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
     truef(u) = -0.5u + sin(u)
     Z = [[x] for x in range(-3, 3; length = 10)]
@@ -40,7 +40,7 @@ end
     lossT = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
     @info "B-smoke" loss0 lossT
     @test lossT < loss0                               # train! actually descended (optimizer-driver wiring works)
-    gps = Magpie.posterior_gps(field)
+    gps = Magpie.posterior(field)
     @test length(gps) == 1                            # posterior reconstruction works
     @test isfinite(Magpie.predmean(gps[1], [0.5]))    # reconstructed field is callable
 end

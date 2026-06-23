@@ -18,7 +18,7 @@
 - **`kmeans_anchors` stays exported**; the decoupled sampler (`DecoupledGPSample`, `build_decoupled_sample`) becomes internal.
 - **Behaviour-preserving** for all existing numeric paths; the only new numeric path is `CompositeField(Exact)+MultipleShooting`, and the only behaviour *changes* are opaque crashes → typed errors.
 - **Runic format** every changed `.jl` file before each commit: `git ls-files -z -- '*.jl' | xargs -0 runic --inplace`.
-- Full suite (currently 221/221) stays green. Run a single file with `julia --project=. test/<file>.jl`; full suite `julia --project=. -e 'using Pkg; Pkg.test()'` (~2 min).
+- Full suite (currently 221/221) stays green. Run a single file with `julia --project=. test/<file>.jl`; full suite `MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'` (~2 min).
 
 ## Final public Capability-B export surface (target of Task 3)
 
@@ -130,7 +130,7 @@ In `ext/MagpieSciMLExt.jl`, in the comment block above `function Magpie.train!` 
 
 ```bash
 git ls-files -z -- '*.jl' | xargs -0 runic --inplace
-julia --project=. -e 'using Pkg; Pkg.test()'
+MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 Expected: 222/222 (the new contract test adds one). All green.
 
@@ -227,7 +227,7 @@ Confirm none remain: `grep -rn 'posterior_gps\|posterior_sparsegps' src ext exam
 
 ```bash
 git ls-files -z -- '*.jl' | xargs -0 runic --inplace
-julia --project=. -e 'using Pkg; Pkg.test()'
+MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
 git add -A
 git commit -m "refactor(gpude): single posterior name (remove posterior_gps/posterior_sparsegps)"
 ```
@@ -287,7 +287,7 @@ export coverage, field_error, recovery_metrics, ridge_slice, pathwise_moments
 - [ ] **Step 4: Run suite to confirm internals still resolve**
 
 ```bash
-julia --project=. -e 'using Pkg; Pkg.test()'
+MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 Expected: green. The `using Magpie: FieldLayout, gpfield, …` imports in `test_gpude_unit.jl`, `test_gpude_svgp.jl`, `test_gpude_protocol.jl`, `test_gpude_stage2.jl`, `test_gpude_svgp_mo.jl`, `test_gpude_noise.jl` continue to resolve (explicit import is export-independent). If any test used a now-internal name via bare `using Magpie` without explicit import, qualify it as `Magpie.name` — but the audit found none.
 
@@ -403,7 +403,7 @@ Expected: PASS — Composite+MS recovers the residual; both unsupported combos t
 
 ```bash
 git ls-files -z -- '*.jl' | xargs -0 runic --inplace
-julia --project=. -e 'using Pkg; Pkg.test()'
+MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
 git add -A
 git commit -m "feat(gpude): CompositeField(Exact)+MultipleShooting; typed error for SVGP+MS"
 ```
@@ -531,7 +531,7 @@ Run the file once: `julia --project=. test/test_gpude_pull.jl`, read the `@info 
 
 ```bash
 git ls-files -z -- '*.jl' | xargs -0 runic --inplace
-julia --project=. -e 'using Pkg; Pkg.test()'
+MAGPIE_TEST_SCIML=true julia --project=. -e 'using Pkg; Pkg.test()'
 git add -A
 git commit -m "test(gpude): per-dim σ_obs gradient liveness + Spec-1 deferred-Minors polish"
 ```

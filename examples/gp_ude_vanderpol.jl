@@ -79,7 +79,7 @@ train!(field, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (20 * 2), s = 0.5)
 
 # ## Posterior GPs
 
-gps = posterior_gps(field)
+gps = posterior(field)
 
 # ## 1. Trajectory RMSE — ODE integration of the GP mean field vs clean truth
 #

@@ -113,7 +113,7 @@ train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * length(trajs)), a
 # of this example are (1) the ON/OFF contrast — SVGP does not generalise past its support —
 # and (2) the MEASURED O(M³)-vs-O(N³) scaling advantage (see the bench reference above).
 
-sgps = posterior_sparsegps(field)
+sgps = posterior(field)
 
 # On-support test points: subsample from pooled training states (every 5th column).
 on_pts = [allstates[:, j] for j in 1:5:size(allstates, 2)]

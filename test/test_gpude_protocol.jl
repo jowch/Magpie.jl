@@ -133,6 +133,12 @@ end
     @test predmean(posterior(field)[1], [0.5]) ≈ predmean(posterior(field, field.v0)[1], [0.5])
 end
 
+@testset "posterior is the only reconstruction name" begin
+    @test !isdefined(Magpie, :posterior_gps)
+    @test !isdefined(Magpie, :posterior_sparsegps)
+    @test :posterior in names(Magpie)
+end
+
 @testset "CompositeField protocol: train! + trajectory RMSE + residual field_error" begin
     # Full training gate: trajectory RMSE (hard) + residual field_error (advisory / loose).
     # Per identifiability rule: single trajectory does NOT identify the field pointwise in general.

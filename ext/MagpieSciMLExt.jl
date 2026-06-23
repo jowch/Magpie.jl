@@ -352,8 +352,7 @@ function Magpie.train!(
 end
 
 # ---------------------------------------------------------------------------
-# posterior: canonical solver-free reconstruction. posterior_gps/posterior_sparsegps
-# are public aliases forwarding here.
+# posterior: canonical solver-free reconstruction generic.
 # ---------------------------------------------------------------------------
 
 # NOTE: must be `Magpie.posterior` (qualified) to EXTEND the core stub; an unqualified
@@ -375,10 +374,6 @@ function Magpie.posterior(field::ExactGPField, v)
     prior = AbstractGPs.GP(field.prior.mean, k)
     return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
 end
-
-# Public aliases forwarding to `posterior` (exported back-compat names).
-Magpie.posterior_gps(field::ExactGPField) = Magpie.posterior(field)
-Magpie.posterior_gps(field::ExactGPField, v) = Magpie.posterior(field, v)
 
 # ---------------------------------------------------------------------------
 # SVGPField: multi-output multi-trajectory ELBO loss (shared Z).
@@ -428,10 +423,6 @@ function Magpie.posterior(field::SVGPField, v)
             for i in 1:field.dout
     ]
 end
-
-# Public aliases forwarding to `posterior` (exported back-compat names).
-Magpie.posterior_sparsegps(field::SVGPField) = Magpie.posterior(field)
-Magpie.posterior_sparsegps(field::SVGPField, v) = Magpie.posterior(field, v)
 
 # ---------------------------------------------------------------------------
 # PULL uncertainty propagation (Stage 4). No ODE solver — discrete moment-matching recurrence.
@@ -648,7 +639,7 @@ end
 Reconstruct the posterior GPs from the trained field and dispatch to `propagate(gps, ...)`.
 """
 Magpie.propagate(field::ExactGPField, u0, tspan; kw...) =
-    Magpie.propagate(Magpie.posterior_gps(field), u0, tspan; kw...)
+    Magpie.propagate(Magpie.posterior(field), u0, tspan; kw...)
 
 # Internal Pathwise integrator for ExactGP fields.
 _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise) =
@@ -682,7 +673,7 @@ end
 Reconstruct the sparse posterior GPs from the trained field and dispatch.
 """
 Magpie.propagate(field::SVGPField, u0, tspan; kw...) =
-    Magpie.propagate(Magpie.posterior_sparsegps(field), u0, tspan; kw...)
+    Magpie.propagate(Magpie.posterior(field), u0, tspan; kw...)
 
 # Internal Pathwise integrator for SparseGP fields.
 _pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise) =

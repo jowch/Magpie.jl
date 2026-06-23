@@ -116,7 +116,7 @@ _train_seed(seed, logℓ0) = begin
     f = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = logℓ0)
     train!(f, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
     # Trajectory RMSE: integrate GP mean field vs clean truth (same metric as the LV example).
-    gps = posterior_gps(f)
+    gps = posterior(f)
     gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
     sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
     traj_rmse = sqrt(sum(abs2, sol_gp .- target) / length(target))

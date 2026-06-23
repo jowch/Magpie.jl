@@ -86,15 +86,10 @@ Pathwise(; n = 128) = Pathwise(n)
 # (an extension cannot inject new standalone names into the parent namespace).
 function train! end
 function propagate end
-function posterior_gps end
-function posterior_sparsegps end
-# `posterior` is the canonical solver-free reconstruction generic; `posterior_gps` /
-# `posterior_sparsegps` are kept as public aliases forwarding to it (bodies in the ext).
+# `posterior` is the canonical solver-free reconstruction generic (body in the ext).
 function posterior end
 train!(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 propagate(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
-posterior_gps(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
-posterior_sparsegps(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 posterior(args...; kw...) = error("MagpieSciMLExt not loaded. Add `using OrdinaryDiffEq, SciMLSensitivity`.")
 
 """Multi-output SVGP field: ONE shared set of `M` inducing points `Z` (in state space), per-output
