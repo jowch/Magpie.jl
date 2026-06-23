@@ -23,14 +23,20 @@ using Magpie, KernelFunctions, LinearAlgebra, Random, Statistics, Test
     @test abs(c50 - 0.5) < 0.05
 end
 
-@testset "coverage: perfect prediction scores 1.0" begin
-    Random.seed!(1)
-    d, n = 2, 100
-    truth = [randn(d) for _ in 1:n]
-    # μ = truth, tiny variance → everything covered
-    μs = copy(truth)
-    Σs = [1.0e-10 * Matrix{Float64}(I, d, d) for _ in 1:n]
-    @test coverage(truth, μs, Σs; level = 0.9) ≈ 1.0
+@testset "coverage tracks level and scale (not tautological)" begin
+    rng = MersenneTwister(5)
+    d, n = 2, 4000
+    truth = [randn(rng, d) for _ in 1:n]
+    μs = [zeros(d) for _ in 1:n]
+    Σs = [Matrix{Float64}(I, d, d) for _ in 1:n]      # truth ~ N(0,I), μ=0, Σ=I
+    c90 = coverage(truth, μs, Σs; level = 0.9)
+    c50 = coverage(truth, μs, Σs; level = 0.5)
+    @test abs(c90 - 0.9) < 0.03
+    @test abs(c50 - 0.5) < 0.03
+    @test c90 > c50                                   # higher level ⇒ more coverage (was ignored by the old test)
+    # Under-dispersed Σ ⇒ severe under-coverage (scale matters).
+    Σtight = [1.0e-3 * Matrix{Float64}(I, d, d) for _ in 1:n]
+    @test coverage(truth, μs, Σtight; level = 0.9) < 0.2
 end
 
 @testset "coverage: leading Σ=zeros step is excluded, not counted as miss" begin

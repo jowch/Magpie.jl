@@ -1,4 +1,4 @@
-using Magpie, KernelFunctions, LinearAlgebra, Random, Test
+using Magpie, KernelFunctions, LinearAlgebra, Random, Statistics, Test
 using OrdinaryDiffEq, SciMLSensitivity
 import DifferentiationInterface as DI
 import Mooncake
@@ -69,3 +69,20 @@ end
 # Measured noise-free numbers (Julia 1.12.6, 2026-06-21, seed 20, (0,6) LV ≈1.5 periods):
 #   single ≈ 1.34 (stalls),  multiple/8-seg ≈ 0.62 (recovers, 2.2× better).
 # The NLL objective (Phase 2) shifted these from the old SSE values (single ≈1.49 / multiple ≈0.39).
+
+@testset "train! with MultipleShooting (ExactGPField) runs end-to-end" begin
+    rng = MersenneTwister(3)
+    a = -0.3
+    u0 = [2.0]; tspan = (0.0, 6.0); ts = collect(range(tspan...; length = 36))
+    X = Array(solve(ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0, tspan), Tsit5(); saveat = ts))
+    X .+= 0.02 .* randn(rng, size(X))
+    Z = [collect(c) for c in eachcol(X[:, 1:6])]
+    field = ExactGPField(Magpie._kernel(0.0, 0.0), Z; d = 1)
+    _, vfit = train!(field, (ts, X); shooting = MultipleShooting(nsegments = 4), adam_iters = 300, maxiters = 80)
+    @test all(isfinite, vfit)
+    gps = posterior_gps(field)
+    μs, _ = propagate(gps, u0, tspan; method = PULL(), ts = ts)
+    rmse = sqrt(mean(sum(abs2, μs[k] .- X[:, k]) for k in 1:length(ts)))
+    @info "train!→MS e2e" rmse
+    @test rmse < 0.5                                  # MS training recovers the trajectory
+end

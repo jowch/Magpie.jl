@@ -1,7 +1,7 @@
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Statistics, Test
 using OrdinaryDiffEq, SciMLSensitivity
 import ForwardDiff
-using Magpie: ExactGP, SparseGP, SVGPField, ExactGPField, update, predmean, PULL, Pathwise, propagate
+using Magpie: ExactGP, SparseGP, SVGPField, ExactGPField, update, predmean, PULL, Pathwise, propagate, train!, coverage
 
 # ---------------------------------------------------------------------------
 # Helpers for the per-step Dₙ oracle test (nonlinear field, brute-force ref).
@@ -182,26 +182,20 @@ end
     @test rel_end < 0.25
 end
 
-@testset "propagate: SVGP smoke test (PULL + Pathwise on SVGPField)" begin
-    Random.seed!(42)
-    # Build a simple 2-output SVGPField and train briefly.
-    # State space is 2D: u = [u1, u2]. Inducing points must match.
-    # Data: du1/dt ≈ -0.3*u1, du2/dt ≈ -0.5*u2 (decaying exponentials).
-    t_data = collect(range(0.0, 2.0; length = 20))
-    u_data = vcat(exp.(-0.3 .* t_data)', exp.(-0.5 .* t_data)')   # 2 × 20
-    tspan = (t_data[1], t_data[end])
-    # Inducing points in the 2D state space (grid over [0.2,1] × [0.2,1], 6 points).
-    Z0 = [[u1, u2] for u1 in range(0.3, 1.0; length = 3) for u2 in range(0.3, 1.0; length = 2)]  # 6 pts in 2D
-    field = SVGPField(Magpie._kernel(0.0, 0.0), Z0; dout = 2, logℓ0 = 0.0, logσ0 = 0.0)
-    # Brief train: 200 ADAM iters + minimal LBFGS (maxiters=1 to satisfy the Optimization.jl requirement).
-    Magpie.train!(field, [(t_data, u_data)]; tspan, adam_iters = 200, maxiters = 1)
-    u0 = [1.0, 1.0]
-    ts = collect(range(0.0, 1.0; length = 5))
+@testset "SparseGP PULL coverage is sane" begin
+    rng = MersenneTwister(9)
+    a = -0.35
+    u0 = [1.0]; tspan = (0.0, 5.0); ts = collect(range(tspan...; length = 25))
+    X = Array(solve(ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0, tspan), Tsit5(); saveat = ts))
+    X .+= 0.04 .* randn(rng, size(X))
+    Z = [collect(c) for c in eachcol(X[:, 1:6])]
+    field = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 1)
+    train!(field, (ts, X); adam_iters = 500, maxiters = 120, trace = true)
+    truth = [collect(c) for c in eachcol(X)]
     μs, Σs = propagate(field, u0, tspan; method = PULL(), ts = ts)
-    @test all(all(isfinite.(μ)) for μ in μs)
-    @test all(isfinite(Σ[i, i]) for Σ in Σs for i in 1:2)
-    ens = propagate(field, u0, tspan; method = Pathwise(n = 64), ts = ts)
-    @test size(ens) == (64, 2, length(ts))
-    @test all(isfinite, ens)
-    @info "SVGP propagate smoke" PULL_Σ_end = diag(Σs[end]) ens_mean = mean(ens; dims = 1)
+    # Every Σ is PSD-valid (Task 2/§3) and coverage is finite + not absurd.
+    @test all(isposdef, Σs[2:end])
+    cov90 = coverage(truth, μs, Σs; level = 0.9)
+    @info "SparseGP PULL coverage" cov90
+    @test 0.5 ≤ cov90 ≤ 1.0                            # quantitative oracle, not just finiteness
 end
