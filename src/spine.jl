@@ -68,7 +68,8 @@ _chol(K) = cholesky(Symmetric(K); check = false)
 """Posterior mean at `xs`: prior mean `m(xs)` plus `cov(xs, x)·α` once conditioned."""
 function Statistics.mean(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
-    return _hasdata(g) ? m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α : m
+    _hasdata(g) || return g.d == 1 ? m : repeat(m, 1, g.d)
+    return m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α          # vector (d=1) or nx×d (d>1)
 end
 
 """Posterior (marginal) variance at `xs`: prior variance minus the data-explained part."""
@@ -148,9 +149,9 @@ cross-covariance `cov(x, xs)` between both — cheaper than separate calls.
 """
 function mean_and_var(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
-    _hasdata(g) || return (m, AbstractGPs.var(g.prior, xs))
+    _hasdata(g) || return (g.d == 1 ? m : repeat(m, 1, g.d), AbstractGPs.var(g.prior, xs))
     Ks = AbstractGPs.cov(g.prior, g.x, xs)                    # shared between mean and variance
-    return (m .+ Ks' * g.α, AbstractGPs.var(g.prior, xs) .- diag_Xt_invA_X(g.C, Ks))
+    return (m .+ Ks' * g.α, AbstractGPs.var(g.prior, xs) .- diag_Xt_invA_X(g.C, Ks))   # var shared across outputs
 end
 
 """
@@ -158,6 +159,10 @@ end
 
 Posterior mean and marginal variance at the inputs `xs` (an alias for
 `mean_and_var` on any `AbstractGP`).
+
+For a `d>1` GP, the mean is an `nx×d` matrix (one column per output) and the
+variance is a length-`nx` vector shared across outputs (it depends only on the
+training inputs `x`, not on the observed values).
 """
 predict(g::AbstractGPs.AbstractGP, xs::AbstractVector) = mean_and_var(g, xs)
 
@@ -165,11 +170,16 @@ predict(g::AbstractGPs.AbstractGP, xs::AbstractVector) = mean_and_var(g, xs)
     predmean(g::ExactGP, u) -> Real
 
 Posterior mean at a single input `u`, returned as a scalar (unlike `mean(g, [u])`,
-which returns a length-1 vector).
+which returns a length-1 vector). Only supported for single-output GPs (`d=1`);
+throws `ArgumentError` for `d>1`.
 """
-predmean(g::ExactGP, u) = _hasdata(g) ?
-    only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
-    only(AbstractGPs.mean(g.prior, [u]))
+function predmean(g::ExactGP, u)
+    g.d == 1 ||
+        throw(ArgumentError("predmean returns a scalar but this GP has d=$(g.d) outputs; use mean(g, [u]) for the length-d vector"))
+    return _hasdata(g) ?
+        only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
+        only(AbstractGPs.mean(g.prior, [u]))
+end
 
 """
     _update_incremental(g::ExactGP, X, y) -> ExactGP
