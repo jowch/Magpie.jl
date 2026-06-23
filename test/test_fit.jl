@@ -1,6 +1,5 @@
-using Magpie, AbstractGPs, KernelFunctions, Random, Test, DifferentiationInterface
+using Magpie, AbstractGPs, KernelFunctions, Random, Test
 using Magpie: ExactGP, fit, nlml, _lengthscale, _outputscale
-import Mooncake
 @testset "fit recovers a known lengthscale" begin
     Random.seed!(1)
     ktrue = with_lengthscale(SqExponentialKernel(), 0.5)
@@ -50,8 +49,9 @@ end
     Random.seed!(42)
     X = [randn(2) for _ in 1:40]; y = [sum(abs2, xi) for xi in X]
     # Matérn kernels need Mooncake (ForwardDiff hits sqrt(0) at coincident points).
+    # fit() with no explicit ad= should auto-select Mooncake for Matérn families.
     g52 = Magpie.update(ExactGP(with_lengthscale(Matern52Kernel(), 0.7); noise = 1.0e-3), X, y)
-    fitted = Magpie.fit(g52; ad = AutoMooncake(; config = nothing))
+    fitted = Magpie.fit(g52)
     @test Magpie._basekernel(fitted.prior.kernel) isa Matern52Kernel    # family preserved, not swapped to RBF
     @test Magpie.nlml(fitted) ≤ Magpie.nlml(g52)                         # fit improved (or matched) the objective
     glin = Magpie.update(ExactGP(LinearKernel(); noise = 1.0e-4), X, y)    # unsupported family

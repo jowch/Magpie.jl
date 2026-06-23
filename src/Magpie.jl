@@ -24,6 +24,7 @@ using LinearAlgebra, Statistics, Random
 using AbstractGPs, KernelFunctions
 using AbstractGPs: update_chol, Xt_invA_X, Xt_invA_Y, diag_Xt_invA_X
 using ForwardDiff                      # loads DI's ForwardDiff extension (AutoForwardDiff)
+import Mooncake                        # loads DI's Mooncake extension (AutoMooncake); used by _default_ad for Matérn kernels
 import Statistics: mean, var, cov
 import StatsBase: mean_and_var
 

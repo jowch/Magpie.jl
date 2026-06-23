@@ -15,6 +15,11 @@ _kernelfamily(::Matern32Kernel) = Matern32Kernel()
 _kernelfamily(::Matern52Kernel) = Matern52Kernel()
 _kernelfamily(k) = throw(ArgumentError("fit supports SqExponential/Matern32/Matern52 base kernels; got $(typeof(k)). (grad_predict's derivative path covers the same set.)"))
 
+# AutoForwardDiff is fast and correct for SqExponential; Matérn kernels NaN under ForwardDiff at
+# coincident points (sqrt(0) non-differentiable), so default them to Mooncake (the project's
+# Mooncake-first backend), which differentiates the r=0 diagonal correctly.
+_default_ad(k) = _basekernel(k) isa SqExponentialKernel ? AutoForwardDiff() : AutoMooncake(; config = nothing)
+
 @doc raw"""
     nlml(g::ExactGP) -> Real
 
@@ -35,7 +40,7 @@ function nlml(g::ExactGP)
 end
 
 """
-    fit(g::ExactGP; restarts=1, ad=AutoForwardDiff(), ℓ_prior=:auto) -> ExactGP
+    fit(g::ExactGP; restarts=1, ad=nothing, ℓ_prior=:auto) -> ExactGP
 
 Optimize the kernel lengthscale `ℓ` and signal variance `σ_f²` by minimizing
 [`nlml`](@ref) (plus a lengthscale prior; see below) with LBFGS, returning a GP
@@ -47,7 +52,9 @@ Fitting `σ_f²` (not just `ℓ`) calibrates the function scale, which the deriv
 acquisitions need — a unit-variance prior miscalibrates them on any non-unit-scale target.
 With `restarts > 1`, extra runs start from the initial point jittered in log-space and the
 result with the lowest **penalized** objective wins. `ad` selects the DifferentiationInterface
-backend for the gradient.
+backend for the gradient; `nothing` (the default) picks automatically: `AutoForwardDiff()` for
+`SqExponentialKernel` (fast, no `sqrt(0)` issue) and `AutoMooncake()` for Matérn kernels
+(ForwardDiff produces NaN at coincident training points via `sqrt(0)`).
 
 ## Lengthscale prior (MAP, default on)
 
@@ -68,7 +75,8 @@ Pass `ℓ_prior=(μ, σ)` to set the prior centre/width in log-space explicitly,
     `fit` supports `SqExponentialKernel`, `Matern32Kernel`, and `Matern52Kernel` base kernels
     (the same set `grad_predict`'s derivative path covers). Throws `ArgumentError` for other families.
 """
-function fit(g::ExactGP; restarts::Int = 1, ad = AutoForwardDiff(), ℓ_prior = :auto)
+function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
+    ad === nothing && (ad = _default_ad(g.prior.kernel))
     fam = _kernelfamily(_basekernel(g.prior.kernel))     # validates + returns a fresh base kernel of the same family
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
     noise = g.noise; meanfn = g.prior.mean
