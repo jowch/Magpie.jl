@@ -119,5 +119,32 @@ Statistics.cov(g::LaplaceGP, xs::AbstractVector) =
 """Posterior latent mean at a single input `u`, as a scalar; `>0` predicts the positive class."""
 predmean(g::LaplaceGP, u) = mean(g, [u])[1]
 
+@doc raw"""
+    nlml(g::LaplaceGP) -> Real
+
+Negative Laplace log marginal likelihood (Rasmussen & Williams, eq. 3.32) — the objective
+[`fit`](@ref) minimizes for a `LaplaceGP`:
+
+```math
+-\log q(y \mid X) = \tfrac{1}{2}(\hat f - m)^\top a \;-\; \log p(y \mid \hat f)\;+\;\sum_i \log L_{ii},
+```
+
+where ``\hat f = K a + m`` is the MAP latent, ``a`` the cached dual, and ``L`` the Cholesky factor
+of ``B = I + W^{1/2} K W^{1/2}``. Returns `0.0` for an unconditioned classifier.
+"""
+function nlml(g::LaplaceGP)
+    _hasdata(g) || return 0.0
+    m = AbstractGPs.mean(g.prior, g.x)
+    K = Matrix(Symmetric(AbstractGPs.cov(g.prior, g.x))) + 1.0e-9I
+    Ka = K * g.a
+    fhat = Ka .+ m
+    t = float.(g.y)
+    softplus(z) = log1p(exp(-abs(z))) + max(z, zero(z))   # numerically stable log(1 + eᶻ)
+    loglik = sum(t .* fhat .- softplus.(fhat))            # logistic log p(y | f̂)
+    quad = 0.5 * dot(Ka, g.a)                             # ½(f̂-m)ᵀ K⁻¹ (f̂-m) = ½(Ka)ᵀa
+    logdetB = sum(log, diag(g.L))                         # ½ log|B|
+    return quad - loglik + logdetB
+end
+
 # v1: the Laplace path does no hyperparameter refit, so `fit` returns the GP unchanged.
 fit(g::LaplaceGP; kwargs...) = g
