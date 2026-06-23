@@ -58,11 +58,17 @@ function nlml(g::ExactGP)
     return 0.5 * dot(g.δ, g.α) + g.d * (sum(log, diag(g.C.U)) + 0.5n * log(2π))
 end
 
+# Per-model fit hooks: training (inputs, targets) and rebuild+condition from a trial kernel.
+_fit_xy(g::ExactGP) = (g.x, g.δ .+ AbstractGPs.mean(g.prior, g.x))
+_recondition(g::ExactGP, kernel, X, y) = update(ExactGP(kernel; noise = g.noise, mean = g.prior.mean), X, y)
+
 """
-    fit(g::ExactGP; restarts=1, ad=nothing, ℓ_prior=:auto) -> ExactGP
+    fit(g::AbstractGPModel; restarts=1, ad=nothing, ℓ_prior=:auto) -> AbstractGPModel
 
 Optimize the kernel's hyperparameters by minimizing [`nlml`](@ref) (plus a lengthscale prior;
-see below) with LBFGS, returning a GP re-conditioned at the best hyperparameters.
+see below) with LBFGS, returning a GP re-conditioned at the best hyperparameters. Works for any
+`AbstractGPModel` that defines `nlml`, `_fit_xy`, and `_recondition` — `ExactGP` (exact evidence)
+and `LaplaceGP` (Laplace evidence).
 
 `fit` treats the GP's kernel as a structural template: it `Optimisers.destructure`s it into a
 flat vector of positive scale parameters (inverse-lengthscales and output scales), optimizes the
@@ -97,9 +103,9 @@ For **ARD or composite** kernels there is no single lengthscale, so `ℓ_prior=:
     scales). Kernels with non-positive or non-scale leaves (e.g. `LinearKernel`, whose offset
     destructures to `0.0`) raise an `ArgumentError`.
 """
-function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
-    g.d == 1 ||
-        throw(ArgumentError("fit currently supports single-output GPs (d=1); got d=$(g.d)."))
+function fit(g::AbstractGPModel; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
+    _outputdim(g) == 1 ||
+        throw(ArgumentError("fit currently supports single-output models; got _outputdim=$(_outputdim(g))."))
     # Auto-wrap so a tunable σ_f² leaf is always present (a bare `with_lengthscale` has none).
     # Don't wrap composite (sum/product) kernels — their components already carry σ_f² leaves.
     k0 =
@@ -119,8 +125,7 @@ function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
         @warn "fit: this composite kernel has no scale factor, so the signal variance σ_f² is fixed at 1 and not tuned. Add a scale factor (e.g. `1.0 * k`) to a component to calibrate it." maxlog = 1
     end
     ad === nothing && (ad = _default_ad(k0))
-    X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
-    noise = g.noise; meanfn = g.prior.mean
+    X, y = _fit_xy(g)
     # MAP lengthscale prior: scalar-lengthscale kernels only (`_lengthscale` throws otherwise).
     scalar_ℓ = try
         (_lengthscale(k0); true)
@@ -144,7 +149,7 @@ function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
     # logθ → kernel via the rebuild closure; penalty reads logℓ off the rebuilt kernel (AD-safe).
     function loss(logθ, _)
         k = re(exp.(logθ))
-        base = nlml(update(ExactGP(k; noise = noise, mean = meanfn), X, y))
+        base = nlml(_recondition(g, k, X, y))
         pen = pri === nothing ? zero(eltype(logθ)) : 0.5 * ((log(_lengthscale(k)) - pri[1]) / pri[2])^2
         return base + pen
     end
@@ -155,7 +160,7 @@ function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
         prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb = fill(-6.0, np), ub = fill(6.0, np))
         sol = solve(prob, LBFGS())
         if obj(sol.u) < best_obj
-            best = update(ExactGP(re(exp.(sol.u)); noise = noise, mean = meanfn), X, y)
+            best = _recondition(g, re(exp.(sol.u)), X, y)
             best_obj = obj(sol.u)
         end
     end

@@ -38,3 +38,16 @@ end
     ℓbest = exp(grid[argmin([loss([lg]) for lg in grid])])
     @test 0.1 < ℓbest < 3.0
 end
+
+@testset "fit(::LaplaceGP) recovers a sensible lengthscale and improves the evidence" begin
+    using Magpie: LaplaceGP, nlml, fit, update
+    Random.seed!(2)
+    # smooth boundary; a too-short initial lengthscale over-fits → fit should lengthen it
+    X = [4.0 .* rand(2) .- 2.0 for _ in 1:50]
+    yb = [(x[1] + 0.7x[2] > 0) for x in X]
+    g0 = update(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.15)), X, yb)
+    g = fit(g0; restarts = 2)
+    @test nlml(g) ≤ nlml(g0) + 1.0e-6                      # evidence improved (or matched)
+    @test Magpie._lengthscale(g.prior.kernel) > Magpie._lengthscale(g0.prior.kernel)  # lengthscale grew
+    @test g isa LaplaceGP                                  # still a classifier
+end

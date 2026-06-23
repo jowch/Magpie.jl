@@ -146,5 +146,7 @@ function nlml(g::LaplaceGP)
     return quad - loglik + logdetB
 end
 
-# v1: the Laplace path does no hyperparameter refit, so `fit` returns the GP unchanged.
-fit(g::LaplaceGP; kwargs...) = g
+# Hooks that let the generic `fit` (src/fit.jl) drive a LaplaceGP: its training data and how to
+# rebuild+condition it from a trial kernel. Hyperparameter fitting maximizes the Laplace evidence.
+_fit_xy(g::LaplaceGP) = (g.x, g.y)
+_recondition(g::LaplaceGP, kernel, X, y) = update(LaplaceGP(kernel; mean = g.prior.mean), X, y)
