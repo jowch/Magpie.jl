@@ -440,13 +440,12 @@ Add to `test/test_gpude_protocol.jl` (uses `propagate, PULL, Pathwise, posterior
     @test size(ens, 3) == length(ts)
     @test_throws Exception propagate(cf_ex, u0, tspan; method = PULL(), ts = ts)
 
-    # SVGP inner: posterior works; Pathwise works.
+    # SVGP inner: train! is unsupported (fails clearly) — gpfield is ExactGPField-only. Tracked follow-up.
+    # (Decision update: Composite(SVGP inner) was never trainable — opaque MethodError — so per the
+    #  fail-clear+defer decision a shooting-agnostic ArgumentError guard rejects it; this pins that.)
     Zs = kmeans_anchors(X, 5; rng = MersenneTwister(2))
     cf_sv = CompositeField(known, SVGPField(SqExponentialKernel(), Zs; dout = 1))
-    train!(cf_sv, (ts, X); adam_iters = 100, maxiters = 40)
-    @test length(posterior(cf_sv)) == 1
-    ens_sv = propagate(cf_sv, u0, tspan; method = Pathwise(n = 16), ts = ts)
-    @test size(ens_sv, 3) == length(ts)
+    @test_throws ArgumentError train!(cf_sv, (ts, X); adam_iters = 10, maxiters = 5)
 end
 ```
 

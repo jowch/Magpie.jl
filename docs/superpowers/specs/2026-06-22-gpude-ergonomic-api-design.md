@@ -114,14 +114,23 @@ asserting, for inner ∈ {ExactGPField, SVGPField}:
 
 | op | Exact inner | SVGP inner |
 |----|-------------|------------|
-| `train!` + SingleShooting | works | works |
+| `train!` + SingleShooting | works | typed error (E) |
 | `train!` + MultipleShooting | works (E) | typed error (E) |
 | `posterior` | works | works |
-| `propagate` Pathwise | works | works |
+| `propagate` Pathwise | works | (moot — unt­rainable) |
 | `propagate` PULL | typed error (already) | typed error (already) |
 
-No new code is needed for the "works/already-errors" cells beyond E; this section is a guarding
-test that pins the behaviour so a future refactor can't silently break composition.
+**Correction (surfaced during implementation):** `CompositeField` with an `SVGPField` inner is NOT
+trainable at all — the composite RHS evaluates its residual via `gpfield`, which is `ExactGPField`-only,
+so `train!` previously crashed with an opaque `MethodError`. Per the locked decision (fail-clear +
+defer), `train!` on a `CompositeField(SVGP inner)` now throws a typed `ArgumentError` under ANY shooting
+(not only MultipleShooting), and "known physics + SVGP residual" is a tracked follow-up — to be done in
+one round together with SVGP + MultipleShooting (both need `gpfield(::SVGPField)` and reconciliation of
+the NLL-through-solver path with the SVGP collapsed ELBO). The matrix test pins this clear failure.
+
+No new code is needed for the Exact-inner "works/already-errors" cells beyond E; this section adds the
+`CompositeField(SVGP)` fail-clear guard and a guarding test that pins the behaviour so a future
+refactor can't silently break composition.
 
 ### E. Composite(Exact) + MultipleShooting; clear errors elsewhere
 

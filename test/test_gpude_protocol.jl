@@ -219,3 +219,28 @@ end
     # Advisory assertion: single-trajectory identifiability is limited; we log and assert loosely
     @test ferr < 5.0   # loose (real recovery gives ≪ 1; diverged gives > 10)
 end
+
+@testset "CompositeField support matrix (propagate axis)" begin
+    # Pin the propagate-axis support matrix for CompositeField:
+    #   ExactGPField inner: posterior✓  Pathwise✓  PULL✗ (intentional error)
+    #   SVGPField inner:    train!✗ (fail-clear ArgumentError — gpfield is ExactGPField-only; tracked follow-up)
+    # Uses a simple 1D scalar ODE so the test runs fast.
+    rng = MersenneTwister(7)
+    known(u, t) = -0.3 .* u
+    u0 = [1.0]; tspan = (0.0, 3.0); ts = collect(range(tspan...; length = 12))
+    X = Array(solve(ODEProblem((du, u, p, t) -> (du .= known(u, t); du .+= 0.2), u0, tspan), Tsit5(); saveat = ts))
+
+    # Exact inner: posterior works; Pathwise works; PULL errors clearly.
+    Zx = [[x] for x in range(0.3, 1.0; length = 5)]
+    cf_ex = CompositeField(known, ExactGPField(SqExponentialKernel(), Zx; d = 1))
+    train!(cf_ex, (ts, X); adam_iters = 100, maxiters = 40)
+    @test length(posterior(cf_ex)) == 1
+    ens = propagate(cf_ex, u0, tspan; method = Pathwise(n = 16), ts = ts)
+    @test size(ens, 3) == length(ts)
+    @test_throws Exception propagate(cf_ex, u0, tspan; method = PULL(), ts = ts)
+
+    # SVGP inner: train! is unsupported (fails clearly) — gpfield is ExactGPField-only. Tracked follow-up.
+    Zs = kmeans_anchors(X, 5; rng = MersenneTwister(2))
+    cf_sv = CompositeField(known, SVGPField(SqExponentialKernel(), Zs; dout = 1))
+    @test_throws ArgumentError train!(cf_sv, (ts, X); adam_iters = 10, maxiters = 5)
+end

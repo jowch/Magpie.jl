@@ -339,8 +339,11 @@ _train_init(cf::Magpie.CompositeField, trajs, shooting) =
 _assert_shooting_supported(field, shooting) = nothing
 _assert_shooting_supported(::SVGPField, ::Magpie.MultipleShooting) =
     throw(ArgumentError("MultipleShooting is not supported for SVGPField. Use SingleShooting for SVGP fields. (SVGP + MultipleShooting is a tracked follow-up.)"))
-function _assert_shooting_supported(cf::Magpie.CompositeField, ms::Magpie.MultipleShooting)
-    getfield(cf, :gp) isa SVGPField && throw(ArgumentError("MultipleShooting is not supported for a CompositeField with an SVGPField inner field. Use SingleShooting. (SVGP + MultipleShooting is a tracked follow-up.)"))
+# A CompositeField with an SVGPField inner is unsupported for train! under ANY shooting:
+# the composite RHS evaluates the residual via gpfield (ExactGPField-only), and the SVGP
+# collapsed-ELBO objective does not compose through the solver path. Tracked follow-up.
+function _assert_shooting_supported(cf::Magpie.CompositeField, shooting)
+    getfield(cf, :gp) isa SVGPField && throw(ArgumentError("CompositeField with an SVGPField inner field is not supported for train! yet. Use an ExactGPField inner. (known + SVGP residual is a tracked follow-up.)"))
     return nothing
 end
 
