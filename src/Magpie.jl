@@ -37,11 +37,8 @@ export LaplaceGP
 export AcquisitionFunction, MarginalAcquisition, Straddle, RandStraddle, BinaryBALD, resample
 export Box, Points, SobolPolish, grid_points, acquire
 export ActiveLearner, observe!, fit!, run!, posterior_gp, queried_points, all_data
-export GPField, CompositeField, ExactGPField, SparseGP, SVGPField, FieldLayout, gpfield, solve_alpha, train!, propagate
-export unpack, regularizer, posterior
-export SingleShooting, MultipleShooting, PULL, Pathwise, DecoupledGPSample, kmeans_anchors
-export build_decoupled_sample
-export svgp_kl, nLS, unpack_LS, L_ZZ_factor, svgp_moments
+export GPField, ExactGPField, SVGPField, CompositeField, SparseGP, train!, posterior, propagate
+export SingleShooting, MultipleShooting, PULL, Pathwise, kmeans_anchors
 export coverage, field_error, recovery_metrics, ridge_slice, pathwise_moments
 
 end

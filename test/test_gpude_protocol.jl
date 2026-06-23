@@ -139,6 +139,27 @@ end
     @test :posterior in names(Magpie)
 end
 
+@testset "Capability-B export surface is trimmed" begin
+    public = (
+        :GPField, :ExactGPField, :SVGPField, :CompositeField, :SparseGP,
+        :train!, :posterior, :propagate, :SingleShooting, :MultipleShooting,
+        :PULL, :Pathwise, :kmeans_anchors,
+    )
+    internal = (
+        :FieldLayout, :gpfield, :solve_alpha, :unpack, :regularizer,
+        :svgp_kl, :nLS, :unpack_LS, :L_ZZ_factor, :svgp_moments,
+        :DecoupledGPSample, :build_decoupled_sample,
+    )
+    exported = Set(names(Magpie))
+    for n in public
+        @test n in exported
+    end
+    for n in internal
+        @test !(n in exported)          # not exported …
+        @test isdefined(Magpie, n)      # … but still defined/callable as Magpie.n
+    end
+end
+
 @testset "CompositeField protocol: train! + trajectory RMSE + residual field_error" begin
     # Full training gate: trajectory RMSE (hard) + residual field_error (advisory / loose).
     # Per identifiability rule: single trajectory does NOT identify the field pointwise in general.
