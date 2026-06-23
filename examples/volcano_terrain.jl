@@ -87,6 +87,7 @@ Xs = [[xs[c], ys[r]] for r in 1:step:nrow for c in 1:step:ncol]
 Ys = [Z[r, c]        for r in 1:step:nrow for c in 1:step:ncol]
 g = update(ExactGP(with_lengthscale(SqExponentialKernel(), [1 / 6, 1 / 6]); noise = 0.01), Xs, Ys)
 g = Magpie.fit(g; restarts = 5)   # fits per-axis lengthscales for the terrain
+@info "fitted ARD lengthscales (x, y)" ℓ = round.(1 ./ g.prior.kernel.kernel.transform.v; digits = 3)
 cps = critical_points(g, box)
 
 nmax = count(c -> c.kind == :max, cps)
