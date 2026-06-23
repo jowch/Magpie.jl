@@ -37,7 +37,8 @@ function newton_polish(g::ExactGP, x0; box::Box, iters::Int = 20, λ::Real = 1.0
         x = clamp.(x .- (Symmetric(H) + λ * I) \ μ∇, box.lb, box.ub)
         μ∇, _, H = grad_predict(g, x)
     end
-    return (x, μ∇, H)
+    res = norm(μ∇)
+    return (; x, μ∇, H, residual = res, converged = res < tol)
 end
 
 @doc raw"""
@@ -64,11 +65,12 @@ function saddle_walk(g::ExactGP, x0; box::Box, iters::Int = 60, η::Real = 0.05,
         μ∇, _, H = grad_predict(g, x)
         norm(μ∇) < tol && break
         v = eigen(Symmetric(H)).vectors[:, 1]          # lowest-curvature mode
-        F = -μ∇ + 2 * dot(μ∇, v) * v                        # reflect along v: ascend it, descend rest
+        F = -μ∇ + 2 * dot(μ∇, v) * v                    # reflect along v: ascend it, descend rest
         x = clamp.(x .+ η .* F, box.lb, box.ub)
     end
     μ∇, _, H = grad_predict(g, x)
-    return (x, μ∇, H)
+    res = norm(μ∇)
+    return (; x, μ∇, H, residual = res, converged = res < tol)
 end
 
 # Seed set for transition_state: the two minima plus `nseed` points jittered perpendicular to
@@ -115,15 +117,15 @@ function transition_state(
     predict(gp) = predictor === :newton ? newton_polish(gp, mid; box = box) :
         saddle_walk(gp, mid; box = box, η = η)
     history = Tuple{Int, Vector{Float64}, Symbol}[]
-    xs, _, H = predict(g)
-    push!(history, (length(X), xs, classify(H)))
+    r = predict(g)
+    push!(history, (length(X), r.x, classify(r.H)))
     while length(X) < budget
-        xs, _, _ = predict(g)
-        push!(X, clamp.(xs, box.lb, box.ub))
+        r = predict(g)
+        push!(X, clamp.(r.x, box.lb, box.ub))
         g = buildgp(X)
-        xs2, _, H2 = predict(g)
-        push!(history, (length(X), xs2, classify(H2)))
+        r2 = predict(g)
+        push!(history, (length(X), r2.x, classify(r2.H)))
     end
-    xs, _, H = predict(g)
-    return (saddle = xs, kind = classify(H), g = g, history = history)
+    r = predict(g)
+    return (saddle = r.x, kind = classify(r.H), converged = r.converged, residual = r.residual, g = g, history = history)
 end

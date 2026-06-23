@@ -82,3 +82,16 @@ end
     @test classify([0.0 0.0; 0.0 0.0]) == :unclassified   # genuinely flat → undetermined
     @test classify([1.0e-4 0.0; 0.0 2.0e-4]) == :min   # both eigenvalues < old 1e-3 floor; relative threshold still resolves it
 end
+
+@testset "walkers report convergence honestly" begin
+    Random.seed!(6)
+    # A monotone ramp on the normalised MB box has NO interior critical point: the walker
+    # must clamp to a boundary and report converged=false with a non-small residual.
+    ramp(p) = p[1]
+    X = [MB_BOX.lb .+ (MB_BOX.ub .- MB_BOX.lb) .* rand(2) for _ in 1:20]
+    g = Magpie.update(ExactGP(mbkernel(); noise = NOISE), X, ramp.(X))
+    r = newton_polish(g, (MB_BOX.lb .+ MB_BOX.ub) ./ 2; box = MB_BOX)
+    @test r.converged == false
+    @test r.residual > 1.0e-2
+    @test r.x == r[1] && r.H == r[3]      # positional compatibility preserved
+end
