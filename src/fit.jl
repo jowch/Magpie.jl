@@ -1,4 +1,5 @@
 using Optimization, OptimizationOptimJL, DifferentiationInterface
+using Optimisers: destructure
 
 # Peel ScaledKernel/TransformedKernel wrappers to read hyperparameters.
 # ℓ from with_lengthscale(k, ℓ) == k ∘ ScaleTransform(1/ℓ); σ² from `c * k` == ScaledKernel.
@@ -10,10 +11,6 @@ _basekernel(k) = k
 _basekernel(k::KernelFunctions.TransformedKernel) = _basekernel(k.kernel)
 _basekernel(k::KernelFunctions.ScaledKernel) = _basekernel(k.kernel)
 
-_kernelfamily(::SqExponentialKernel) = SqExponentialKernel()
-_kernelfamily(::Matern32Kernel) = Matern32Kernel()
-_kernelfamily(::Matern52Kernel) = Matern52Kernel()
-_kernelfamily(k) = throw(ArgumentError("fit supports SqExponential/Matern32/Matern52 base kernels; got $(typeof(k)). (grad_predict's derivative path covers the same set.)"))
 
 # AutoForwardDiff is fast and correct for SqExponential; Matérn kernels NaN under ForwardDiff at
 # coincident points (sqrt(0) non-differentiable), so default them to Mooncake (the project's
@@ -42,60 +39,100 @@ end
 """
     fit(g::ExactGP; restarts=1, ad=nothing, ℓ_prior=:auto) -> ExactGP
 
-Optimize the kernel lengthscale `ℓ` and signal variance `σ_f²` by minimizing
-[`nlml`](@ref) (plus a lengthscale prior; see below) with LBFGS, returning a GP
-re-conditioned at the best hyperparameters.
+Optimize the kernel's hyperparameters by minimizing [`nlml`](@ref) (plus a lengthscale prior;
+see below) with LBFGS, returning a GP re-conditioned at the best hyperparameters.
 
-Optimization runs in log-space (`[logℓ, logσ²]`, bounded to `[-6, 6]`) so both stay
-positive. The recovered kernel is `σ_f²·with_lengthscale(SqExponentialKernel(), ℓ)`.
-Fitting `σ_f²` (not just `ℓ`) calibrates the function scale, which the derivative/straddle
-acquisitions need — a unit-variance prior miscalibrates them on any non-unit-scale target.
-With `restarts > 1`, extra runs start from the initial point jittered in log-space and the
-result with the lowest **penalized** objective wins. `ad` selects the DifferentiationInterface
-backend for the gradient; `nothing` (the default) picks automatically: `AutoForwardDiff()` for
-`SqExponentialKernel` (fast, no `sqrt(0)` issue) and `AutoMooncake()` for Matérn kernels
-(ForwardDiff produces NaN at coincident training points via `sqrt(0)`).
+`fit` treats the GP's kernel as a structural template: it `Optimisers.destructure`s it into a
+flat vector of positive scale parameters (inverse-lengthscales and output scales), optimizes the
+**log** of that vector (bounded to `[-6, 6]`, so every scale stays positive), and rebuilds the
+kernel. This supports **any** KernelFunctions kernel whose hyperparameters are positive scales:
+`SqExponential`/`Matern`/`RationalQuadratic` bases, **ARD** (a lengthscale per input dimension),
+and **sums/products** of these. A bare `with_lengthscale(base, ℓ)` kernel (no signal-variance
+factor) is auto-wrapped as `1.0 * k` so σ_f² is always a tunable leaf — fitting σ_f² calibrates
+the function scale, which the derivative/straddle acquisitions need.
 
-## Lengthscale prior (MAP, default on)
+`ad` selects the DifferentiationInterface backend; `nothing` (default) picks automatically:
+`AutoForwardDiff()` for `SqExponentialKernel` bases (fast, smooth at `r=0`) and `AutoMooncake()`
+otherwise (Matérn bases NaN under ForwardDiff at coincident points via `sqrt(0)`; composites
+default to Mooncake too). With `restarts > 1`, extra runs start from the initial point jittered
+in log-space and the result with the lowest **penalized** objective wins.
 
-`fit` is MAP, not pure MLE: it adds a weakly-informative Gaussian prior on `logℓ` to the
-objective, `0.5·((logℓ − μ)/σ)²`. **`ℓ_prior=:auto`** (the default) centres that prior on the
-**initial lengthscale** of `g`'s kernel with width `σ=0.75` (log units), i.e. *refine the
-lengthscale you specified, don't run away from it.* This matters when data is scarce: pure MLE
-drives `ℓ` **up** (a flat surface explains few points cheaply), over-smoothing away the very
-features (wells, saddles) one is hunting — verified to collapse critical-point recovery at small
-`n`. The initial `ℓ` you chose encodes the feature scale you expect, so anchoring to it (softly)
-keeps `fit` well-behaved. With enough data the likelihood dominates the prior and recovers the
-data-driven `ℓ` as usual.
+## Lengthscale prior (MAP, default on — scalar-lengthscale kernels only)
 
-Pass `ℓ_prior=(μ, σ)` to set the prior centre/width in log-space explicitly, or
-`ℓ_prior=nothing` for pure MLE (the pre-MAP behaviour). `σ_f²` is never penalized.
+For a single-scalar-lengthscale kernel, `fit` is MAP: it adds a weakly-informative Gaussian prior
+on `logℓ`, `0.5·((logℓ − μ)/σ)²`. **`ℓ_prior=:auto`** (default) centres it on the **initial
+lengthscale** of `g`'s kernel with width `σ=0.75` (log units) — *refine the lengthscale you
+specified, don't run away from it.* This matters when data is scarce: pure MLE drives `ℓ` up (a
+flat surface explains few points cheaply), over-smoothing away the wells/saddles one hunts. Pass
+`ℓ_prior=(μ, σ)` to set centre/width explicitly, or `ℓ_prior=nothing` for pure MLE. σ_f² is never
+penalized.
+
+For **ARD or composite** kernels there is no single lengthscale, so `ℓ_prior=:auto` falls back to
+**no prior** (pure MLE); passing an explicit `ℓ_prior=(μ,σ)` then raises an `ArgumentError`.
 
 !!! note
-    `fit` supports `SqExponentialKernel`, `Matern32Kernel`, and `Matern52Kernel` base kernels
-    (the same set `grad_predict`'s derivative path covers). Throws `ArgumentError` for other families.
+    `fit` requires the kernel's hyperparameters to be **positive scales** (lengthscales, output
+    scales). Kernels with non-positive or non-scale leaves (e.g. `LinearKernel`, whose offset
+    destructures to `0.0`) raise an `ArgumentError`.
 """
 function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
     g.d == 1 ||
         throw(ArgumentError("fit currently supports single-output GPs (d=1); got d=$(g.d)."))
-    ad === nothing && (ad = _default_ad(g.prior.kernel))
-    fam = _kernelfamily(_basekernel(g.prior.kernel))     # validates + returns a fresh base kernel of the same family
+    # Auto-wrap so a tunable σ_f² leaf is always present (a bare `with_lengthscale` has none).
+    # Don't wrap composite (sum/product) kernels — their components already carry σ_f² leaves.
+    k0 =
+        g.prior.kernel isa KernelFunctions.ScaledKernel ||
+        g.prior.kernel isa KernelFunctions.KernelSum ||
+        g.prior.kernel isa KernelFunctions.KernelProduct ? g.prior.kernel : 1.0 * g.prior.kernel
+    θ0, re = destructure(k0)
+    (!isempty(θ0) && all(>(0), θ0)) || throw(
+        ArgumentError(
+            "fit optimizes positive scale hyperparameters (lengthscales, output scales) in log-space, " *
+                "but the kernel destructured to $(θ0) — empty or with a non-positive leaf. Supported: " *
+                "SqExponential/Matern/RationalQuadratic kernels (incl. ARD) and their sums/products. " *
+                "Got $(typeof(g.prior.kernel)).",
+        )
+    )
+    ad === nothing && (ad = _default_ad(k0))
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
     noise = g.noise; meanfn = g.prior.mean
-    logℓ0 = log(_lengthscale(g.prior.kernel))
-    p0 = [logℓ0, log(_outputscale(g.prior.kernel))]
-    pri = ℓ_prior === :auto ? (logℓ0, 0.75) : ℓ_prior            # (μ, σ) on logℓ, or nothing
-    penalty(p) = pri === nothing ? zero(eltype(p)) : 0.5 * ((p[1] - pri[1]) / pri[2])^2
-    # p = [logℓ, logσ²]; closure stays AD-compatible (no ParameterHandling unflatten).
-    mkkernel(p) = exp(p[2]) * with_lengthscale(fam, exp(p[1]))
-    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise = noise, mean = meanfn), X, y)) + penalty(p)
-    obj(p) = loss(p, nothing)
-    best = g; best_obj = obj(p0)                                      # penalty(p0)=0 for :auto
+    # MAP lengthscale prior: scalar-lengthscale kernels only (`_lengthscale` throws otherwise).
+    scalar_ℓ = try
+        (_lengthscale(k0); true)
+    catch
+        false
+    end
+    if ℓ_prior === :auto
+        pri = scalar_ℓ ? (log(_lengthscale(k0)), 0.75) : nothing
+    elseif ℓ_prior === nothing
+        pri = nothing
+    else
+        scalar_ℓ || throw(
+            ArgumentError(
+                "ℓ_prior=(μ,σ) requires a scalar-lengthscale kernel; this one is ARD/composite. Use ℓ_prior=nothing.",
+            )
+        )
+        pri = ℓ_prior
+    end
+    logθ0 = log.(θ0)
+    np = length(logθ0)
+    # logθ → kernel via the rebuild closure; penalty reads logℓ off the rebuilt kernel (AD-safe).
+    function loss(logθ, _)
+        k = re(exp.(logθ))
+        base = nlml(update(ExactGP(k; noise = noise, mean = meanfn), X, y))
+        pen = pri === nothing ? zero(eltype(logθ)) : 0.5 * ((log(_lengthscale(k)) - pri[1]) / pri[2])^2
+        return base + pen
+    end
+    obj(logθ) = loss(logθ, nothing)
+    best = g; best_obj = obj(logθ0)                                  # penalty(logθ0)=0 for :auto
     for r in 1:restarts
-        start = r == 1 ? p0 : p0 .+ 0.1 .* randn(2)              # first run exact, rest jittered
-        prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb = [-6.0, -6.0], ub = [6.0, 6.0])
+        start = r == 1 ? logθ0 : logθ0 .+ 0.1 .* randn(np)           # first run exact, rest jittered
+        prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb = fill(-6.0, np), ub = fill(6.0, np))
         sol = solve(prob, LBFGS())
-        obj(sol.u) < best_obj && ((best, best_obj) = (update(ExactGP(mkkernel(sol.u); noise = noise, mean = meanfn), X, y), obj(sol.u)))
+        if obj(sol.u) < best_obj
+            best = update(ExactGP(re(exp.(sol.u)); noise = noise, mean = meanfn), X, y)
+            best_obj = obj(sol.u)
+        end
     end
     return best
 end

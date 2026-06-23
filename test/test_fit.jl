@@ -57,3 +57,29 @@ end
     glin = Magpie.update(ExactGP(LinearKernel(); noise = 1.0e-4), X, y)    # unsupported family
     @test_throws ArgumentError Magpie.fit(glin)
 end
+
+@testset "fit recovers ARD (per-dimension) lengthscales" begin
+    # Anisotropic target: oscillates in x1 (short ℓ), nearly flat in x2 (long ℓ).
+    # fit must drive the x1 inverse-lengthscale ABOVE the x2 one.
+    Random.seed!(11)
+    f(x) = sinpi(2x[1]) + 0.1 * x[2]
+    X = [2 .* rand(2) .- 1 for _ in 1:60]
+    y = f.(X) .+ 1.0e-3 .* randn(60)
+    k0 = 1.0 * with_lengthscale(SqExponentialKernel(), [0.5, 0.5])    # ARD, isotropic start
+    g0 = Magpie.update(ExactGP(k0; noise = 1.0e-3), X, y)
+    g = fit(g0)
+    invℓ = g.prior.kernel.kernel.transform.v     # ScaledKernel → TransformedKernel → ARDTransform.v (inverse lengthscales)
+    @test invℓ[1] > invℓ[2]                       # x1 lengthscale shorter (larger inverse) than x2
+    @test nlml(g) ≤ nlml(g0) + 1.0e-6
+end
+
+@testset "fit handles a composite (sum) kernel" begin
+    Random.seed!(12)
+    X = [randn(2) for _ in 1:40]; y = [sum(abs2, xi) for xi in X]
+    k0 = 1.0 * with_lengthscale(SqExponentialKernel(), 0.8) +
+        1.0 * with_lengthscale(Matern32Kernel(), 0.8)
+    g0 = Magpie.update(ExactGP(k0; noise = 1.0e-3), X, y)
+    g = fit(g0)
+    @test nlml(g) ≤ nlml(g0) + 1.0e-6                    # composite fit improved the objective
+    @test g.prior.kernel isa KernelFunctions.KernelSum   # structure preserved through destructure/rebuild
+end
