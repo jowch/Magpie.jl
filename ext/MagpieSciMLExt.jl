@@ -111,9 +111,21 @@ function field_rhs(field::SVGPField, v)
     L_ZZ = _chol(kernelmatrix(k, Zvec) + jit * I).L   # ONE shared Cholesky (shared Z)
     α = L_ZZ' \ μ                                  # M×dout
     pf = vcat(logℓ, logσ, vec(Z), vec(α))          # Z trainable + α threaded into pf (R1)
-    prior = AbstractGPs.GP(field.prior.mean, k)
-    Ls = [Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M) for i in 1:dout]
-    uvar = u -> [Magpie.svgp_var(prior, Zvec, L_ZZ, Ls[i], u) for i in 1:dout]
+    # unpack_LS returns LowerTriangular; convert to Matrix for the uvar closure. Mooncake's AD
+    # through LowerTriangular backsolve (and L_S' * A) can miscompile in some paths (same class
+    # as the Symmetric/Hermitian rrule kink). Dense matrix ops are always Mooncake-safe.
+    # These are CONSTANT captures (not in pf), so the dense copies are correct and preserve AD.
+    L_ZZ_dense = Matrix(L_ZZ)
+    Ls_dense = [Matrix(Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M)) for i in 1:dout]
+    # Use direct kernel calls to avoid AbstractGPs.cov dispatch depth (which can trigger
+    # Mooncake compilation issues on very long reverse-pass chains in large SciML models).
+    # k(z,u) for cross-covariance; k(u,u) for prior variance. Both are plain kernel evals.
+    uvar = function (u)
+        kZu = [k(z, u) for z in Zvec]          # M-vector: k(Z_j, u) for j=1..M
+        A = L_ZZ_dense \ kZu
+        kuu = k(u, u)
+        return [kuu - dot(A, A) + sum(abs2, Ls_dense[i]' * A) for i in 1:dout]
+    end
     function rhs!(du, u, _pf, t; known_physics)
         du .= known_physics(u, t)
         kk = Magpie._kernel(_pf[1], _pf[2])

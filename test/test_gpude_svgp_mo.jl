@@ -44,8 +44,9 @@ end
 
 @testset "trace-corrected SVGP ELBO: gradient sound + L_S coupled" begin
     rng = MersenneTwister(7)
-    Z = [[x] for x in range(-1, 1; length = 3)]
-    field = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 2)
+    # 2D inducing points to match the 2D (cos,sin) trajectory state space (D must equal dout here)
+    Z2d = [[x, y] for x in range(-1.0, 1.0; length = 2) for y in range(-1.0, 1.0; length = 2)]
+    field = SVGPField(Magpie._kernel(0.0, 0.0), Z2d; dout = 2)
     ts = collect(range(0.0, 2.0; length = 12))
     Xtrue = hcat([[cos(t), sin(t)] for t in ts]...)
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
