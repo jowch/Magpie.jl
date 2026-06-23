@@ -1,5 +1,5 @@
 using Magpie, AbstractGPs, KernelFunctions, Random, Test
-using Magpie: ExactGP, Straddle, GradStraddle, LocalPenalization, ActiveLearner, observe!, run!,
+using Magpie: ExactGP, LaplaceGP, Straddle, GradStraddle, BinaryBALD, LocalPenalization, ActiveLearner, observe!, run!,
     acquire, posterior_gp, all_data, queried_points, Box, Points, grid_points
 
 @testset "ActiveLearner loop == batch" begin
@@ -67,4 +67,22 @@ end
     a1 = run!(mk(), f; budget = 8, over = Box([-1.0], [1.0]))
     a2 = run!(mk(), f; budget = 8, over = Box([-1.0], [1.0]))
     @test queried_points(a1) == queried_points(a2)  # same seed → identical survey
+end
+
+@testset "ActiveLearner refits a LaplaceGP in the loop (refit_every>0)" begin
+    # The loop's refit_every now actually fits the classifier (it was a v1 no-op). Start from a
+    # deliberately short lengthscale; after the loop refits, the kernel lengthscale changes — i.e.
+    # the classifier hyperparameters were optimized mid-loop, not left untouched.
+    Random.seed!(7)
+    label(x) = x[1]^2 + x[2]^2 < 1.0
+    al = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.2)), BinaryBALD())
+    box = Box([-2.0, -2.0], [2.0, 2.0])
+    for x in [4 .* rand(2) .- 2 for _ in 1:10]
+        observe!(al, x, label(x))
+    end
+    ℓ0 = Magpie._lengthscale(posterior_gp(al).prior.kernel)
+    run!(al, label; budget = 20, over = box, refit_every = 10)   # refits the classifier mid-loop
+    ℓ1 = Magpie._lengthscale(posterior_gp(al).prior.kernel)
+    @test ℓ1 != ℓ0                                               # fit ran in the loop (no longer a no-op)
+    @test posterior_gp(al) isa LaplaceGP
 end
