@@ -17,10 +17,11 @@ using FiniteDifferences
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
-    @info "B-grad" relerr wnorm = norm(g_fd[(Magpie.NHYP + 1):end]) dσobs = abs(g_fd[Magpie.NHYP])
+    H = Magpie.nhyp(field)
+    @info "B-grad" relerr wnorm = norm(g_fd[(H + 1):end]) dσobs = abs(g_fd[H])
     @test relerr < 5.0e-3                          # Spike 1 saw ~1.3e-4
-    @test norm(g_fd[(Magpie.NHYP + 1):end]) > 1.0e-3   # R3: ∂loss/∂w live (w-block starts after the hyper prefix)
-    @test abs(g_fd[Magpie.NHYP]) > 1.0e-3          # R3 (Phase 2): the σ_obs slot is live
+    @test norm(g_fd[(H + 1):end]) > 1.0e-3         # R3: ∂loss/∂w live (w-block starts after the hyper prefix)
+    @test abs(g_fd[H]) > 1.0e-3                    # R3 (Phase 2): the σ_obs slot (last hyper) is live
 end
 
 # Fast through-solver TRAINING smoke (Phase 6.2): the gradient gate above covers ∂loss; this covers the

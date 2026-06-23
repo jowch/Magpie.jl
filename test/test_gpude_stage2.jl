@@ -16,16 +16,16 @@ using Magpie: ExactGPField, FieldLayout, MultipleShooting
     S = 3
     ms = MultipleShooting(nsegments = S)
     loss = ext.build_loss(field, FieldLayout(n, d), target, ts, tspan, ms)
-    # build the flat vector: [field params (NHYP + n*d) ; vec(s0) (d*S)]; NHYP=[logℓ,logσ,logσ_obs]
+    # build the flat vector: [field params (nhyp(field) + n*d) ; vec(s0) (d*S)]; nhyp=[logℓ,logσ,logσ_obs(1..d)]
     seg_idx = round.(Int, range(1, length(ts); length = S + 1))
     s0 = hcat([target[:, seg_idx[i]] for i in 1:S]...)
-    v0 = vcat(log(0.9), 0.0, log(0.1), 0.1 .* randn(n * d), vec(s0))   # [logℓ, logσ, logσ_obs, vec(w), vec(s0)]
+    v0 = vcat(log(0.9), 0.0, fill(log(0.1), d), 0.1 .* randn(n * d), vec(s0))   # [logℓ, logσ, logσ_obs(1..d), vec(w), vec(s0)]
     g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v0)
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v0)[1]
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
     @info "Stage2 grad" relerr = relerr
     @test relerr < 5.0e-3
-    off = Magpie.NHYP + n * d                           # s0 block starts after [logℓ,logσ,logσ_obs,vec(w)]
+    off = Magpie.nhyp(field) + n * d                    # s0 block starts after [logℓ,logσ,logσ_obs(1..d),vec(w)]
     s2 = (off + d + 1):(off + 2d)                       # free second node s0[:,2]
     @test norm(g_fd[s2]) > 1.0e-4                        # per-segment node differentiates
 end
@@ -49,13 +49,13 @@ end
     loss_nopen = ext.build_loss(field, FieldLayout(n, d), target, ts, tspan, MultipleShooting(nsegments = S; λ = 0.0, λ0 = 0.0))
 
     s0 = [0.1 0.4 0.9; 0.2 0.5 1.0]   # d×S arbitrary nodes (NOT data-seeded ⇒ both penalties nonzero)
-    v = vcat(log(0.9), 0.0, log(0.1), zeros(n * d), vec(s0))   # w = 0
+    v = vcat(log(0.9), 0.0, fill(log(0.1), d), zeros(n * d), vec(s0))   # w = 0; logσ_obs is length-d
     cont_expected = sum(sum(abs2, s0[:, i] .- s0[:, i + 1]) for i in 1:(S - 1))
     anchor_expected = sum(abs2, s0[:, 1] .- target[:, 1])
     @test loss_pen(v) - loss_nopen(v) ≈ λ * cont_expected + λ0 * anchor_expected rtol = 1.0e-8
 
     # All nodes = data IC ⇒ continuity gap 0 AND anchor 0 ⇒ both penalties vanish.
-    v_cont = vcat(log(0.9), 0.0, log(0.1), zeros(n * d), vec(repeat(target[:, 1], 1, S)))
+    v_cont = vcat(log(0.9), 0.0, fill(log(0.1), d), zeros(n * d), vec(repeat(target[:, 1], 1, S)))
     @test abs(loss_pen(v_cont) - loss_nopen(v_cont)) < 1.0e-8
 end
 

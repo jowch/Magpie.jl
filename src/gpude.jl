@@ -237,14 +237,14 @@ function SVGPField(
     return SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
 end
 
-# Layout helpers — flat vector is [logℓ, logσ, logσ_obs, vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
-# jitter is fixed on the field (not a trained slot); logσ_obs (index 3, the NHYP prefix) is the
-# data-term observation noise (not threaded into the SVGP solve pf). Block sizes:
-#   Z:  D·M     (starts at NHYP+1)
-#   μ:  M·dout  (starts after Z)
-#   L_S: dout·nLS(M) (starts after μ)
-# All offsets route through NHYP — no raw `v[3...]` index arithmetic survives. The svgp_* accessors
-# below are themselves the SVGP-layout source of truth (each block offset is computed from NHYP).
+# Layout helpers — flat vector is [logℓ, logσ, logσ_obs(1..dout), vec(Z)(D·M), vec(μ)(M·dout), vec(L_S)(dout·nLS(M))].
+# jitter is fixed on the field (not a trained slot); logσ_obs is a length-dout vector at indices
+# 3:(2+dout) — it is the data-term observation noise (not threaded into the SVGP solve pf). Block sizes:
+#   logσ_obs: dout      (indices 3:(2+dout))
+#   Z:  D·M             (starts at 2+dout+1)
+#   μ:  M·dout          (starts after Z)
+#   L_S: dout·nLS(M)    (starts after μ)
+# All offsets route through `2 + dout`. The svgp_* accessors below are the SVGP-layout source of truth.
 
 "Extract inducing locations as a D×M matrix from flat param vector `v`."
 svgp_Z(f::SVGPField, v) = reshape(v[(2 + f.dout + 1):(2 + f.dout + f.D * f.M)], f.D, f.M)

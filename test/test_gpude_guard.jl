@@ -14,7 +14,7 @@ ext = Base.get_extension(Magpie, :MagpieSciMLExt)
     # Tsit5 exits immediately (zero saved points) ⇒ Array(sol) wrong shape ⇒ guard fires.
     # logℓ/logσ stay 0 so regularizer = 0 (no NaN poisoning of the total loss).
     v = copy(field.v0)
-    v[(Magpie.NHYP + 1):end] .= NaN          # field weights = NaN → propagates to α → pf → RHS = NaN
+    v[(Magpie.nhyp(field) + 1):end] .= NaN   # field weights = NaN → propagates to α → pf → RHS = NaN
     ts = collect(range(0.0, 5.0; length = 20))
     X = zeros(1, length(ts))                  # data is irrelevant; we only check the sentinel
     loss = ext.field_loss(field, Magpie.SingleShooting(), [(ts, X)]; u0 = [0.0], tspan = (0.0, 5.0))

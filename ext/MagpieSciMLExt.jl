@@ -38,15 +38,18 @@ Build the scalar GP-UDE loss `v -> shooting_data_term(...) + regularizer(field, 
 term and the regularizer split cleanly: the regularizer (priors + SVGP KL) is evaluated once
 per `v`, outside any trajectory/segment loop.
 """
-# logσ_obs (the Gaussian-NLL observation-noise log-std) lives at index NHYP of `v` and is consumed
-# ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v` and threads it
-# into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via the trailing kw...).
-field_loss(field, shooting, data; kw...) =
-    v -> shooting_data_term(
-    field, shooting, field_rhs(field, v), data;
-    logσ_obs = v[Magpie.NHYP], kw...
-) +
-    Magpie.regularizer(field, v; kw...)
+# logσ_obs (the Gaussian-NLL observation-noise log-stds) lives at indices 3:(2+outputdim(field)) of `v`
+# and is consumed ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v`
+# and threads it into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via kw...).
+function field_loss(field, shooting, data; kw...)
+    return function (v)
+        pf, rhs! = field_rhs(field, v)
+        return shooting_data_term(
+            field, shooting, (pf, rhs!), data;
+            logσ_obs = v[3:(2 + Magpie.outputdim(field))], kw...
+        ) + Magpie.regularizer(field, v; kw...)
+    end
+end
 
 # --- field_rhs: per-field in-loss α/Cholesky + the `du += f(u)` closure (R1) ---
 
@@ -143,12 +146,14 @@ observations. `σ_obs² = exp(2·logσ_obs)`. logσ_obs is the trained observati
 function shooting_data_term(
         field, ::Magpie.SingleShooting, (pf, rhs!), data;
         logσ_obs, u0 = nothing, tspan = nothing, known_physics = (u, t) -> zero(u),
-        solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
+        uvar = nothing, solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
     )
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
     T = eltype(pf)
-    sse = zero(T)
-    Nd = 0
+    dout = length(logσ_obs)
+    sse = zeros(T, dout)
+    trace = zeros(T, dout)
+    Nd = zeros(Int, dout)
     for (ts, X) in data
         ic = u0 === nothing ? collect(X[:, 1]) : u0
         tsp = tspan === nothing ? (first(ts), last(ts)) : tspan
@@ -161,10 +166,17 @@ function shooting_data_term(
         # (exp(lognoise+2logσ) / field.jitter·σ²) is the SOLE backward guard; do not weaken it
         # on the assumption this sentinel covers it.
         (size(A) == size(X) && all(isfinite, A)) || return convert(T, 1.0e6)
-        sse += sum(abs2, A .- X)
-        Nd += length(X)
+        sse .+= vec(sum(abs2, A .- X; dims = 2))        # per-output SSE
+        Nd .+= size(X, 2)                                # per-output count = #timepoints
+        if uvar !== nothing
+            for col in eachcol(A)
+                trace .+= uvar(col)                      # per-output field variance (Task 6)
+            end
+        end
     end
-    return _gaussian_nll(sse, Nd, logσ_obs)
+    nll = sum(_gaussian_nll(sse[j], Nd[j], logσ_obs[j]) for j in 1:dout)
+    tracecorr = sum(trace[j] / (2 * exp(2 * logσ_obs[j])) for j in 1:dout)
+    return nll + tracecorr
 end
 
 """
@@ -179,15 +191,17 @@ weights), not data likelihood, so they stay un-scaled. `s0` is supplied by the c
 function shooting_data_term(
         field, ms::Magpie.MultipleShooting, (pf, rhs!), data;
         logσ_obs, s0, known_physics = (u, t) -> zero(u),
-        solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
+        uvar = nothing, solver = Tsit5(), sensealg = DEFAULT_SENSEALG, _kw...
     )
     (ts, X) = only(data)
     S = ms.nsegments
     seg_idx = round.(Int, range(1, length(ts); length = S + 1))
     seg_t = [ts[i] for i in seg_idx]
     f!(du, u, p, t) = rhs!(du, u, p, t; known_physics)
-    dataerr = cont = zero(eltype(pf))
-    Nd = 0
+    dout = length(logσ_obs)
+    dataerr = zeros(eltype(pf), dout)
+    cont = zero(eltype(pf))
+    Nd = zeros(Int, dout)
     for i in 1:S
         sol = solve(
             ODEProblem(f!, s0[:, i], (seg_t[i], seg_t[i + 1]), pf), solver;
@@ -195,12 +209,13 @@ function shooting_data_term(
         )
         endp = Array(sol)[:, end]                        # R2: Array(sol) before indexing
         all(isfinite, endp) || return convert(eltype(pf), 1.0e6)   # divergence guard (matches SingleShooting)
-        dataerr += sum(abs2, endp .- X[:, seg_idx[i + 1]])
-        Nd += length(endp)
+        dataerr .+= abs2.(endp .- X[:, seg_idx[i + 1]])
+        Nd .+= 1
         i < S && (cont += sum(abs2, endp .- s0[:, i + 1]))
     end
     # Data-misfit NLL (matches SingleShooting) + soft penalties (own weights, not likelihood).
-    return _gaussian_nll(dataerr, Nd, logσ_obs) + ms.λ * cont + ms.λ0 * sum(abs2, s0[:, 1] .- X[:, 1])
+    nll = sum(_gaussian_nll(dataerr[j], Nd[j], logσ_obs[j]) for j in 1:dout)
+    return nll + ms.λ * cont + ms.λ0 * sum(abs2, s0[:, 1] .- X[:, 1])
 end
 
 # ---------------------------------------------------------------------------
@@ -221,23 +236,23 @@ function build_loss(field, L, u_data, t_data, tspan, ::Magpie.SingleShooting; kw
     return field_loss(field, Magpie.SingleShooting(), [(collect(t_data), u_data)]; u0 = u0, tspan = tspan, kw...)
 end
 
-# Multiple-shooting loss. The trained vector is [logℓ, logσ, logσ_obs, vec(w), vec(s0)] (s0 is d×S);
+# Multiple-shooting loss. The trained vector is [logℓ, logσ, logσ_obs(1..d), vec(w), vec(s0)] (s0 is d×S);
 # the loss extracts s0 from `v` then forwards to shooting_data_term. The MS regularizer is logℓ-only
 # (no λσ term) — set by passing λσ=0.0 to the field regularizer. The s0 block starts AFTER the
-# hyper prefix + the w-block: offset NHYP + nwL (routed through Magpie.NHYP — no hardcoded 3).
+# hyper prefix + the w-block: offset (2 + field.d) + nwL.
 function build_loss(
         field::ExactGPField, L::FieldLayout, u_data, t_data, tspan,
         ms::Magpie.MultipleShooting; kw...
     )
     S = ms.nsegments
     nwL = L.n * L.d
-    off = Magpie.NHYP + nwL                                     # s0 starts after [logℓ,logσ,logσ_obs,vec(w)]
+    off = 2 + field.d + nwL                                      # s0 starts after [logℓ,logσ,logσ_obs(1..d),vec(w)]
     regkw = merge((λσ = 0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
     return function loss(v)
         s0 = reshape(v[(off + 1):(off + field.d * S)], field.d, S)
         return shooting_data_term(
             field, ms, field_rhs(field, v), [(collect(t_data), u_data)];
-            s0 = s0, logσ_obs = v[Magpie.NHYP], kw...
+            s0 = s0, logσ_obs = v[3:(2 + field.d)], kw...
         ) +
             Magpie.regularizer(field, v; regkw...)
     end
