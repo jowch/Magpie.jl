@@ -72,6 +72,23 @@ function _bruteforce_Dn(gps, u0, ts; buffer = length(ts))
     return Dns
 end
 
+@testset "project_psd" begin
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    # Indefinite symmetric matrix: eigenvalues {2, -1}.
+    M = [0.5 1.5; 1.5 0.5]
+    @test !isposdef(M)
+    P = ext._project_psd(M)
+    @test isposdef(P)                      # PD after projection
+    @test issymmetric(P)
+    # nearest-PSD: positive eigenpair preserved, negative clamped to a small floor
+    ev = sort(eigen(Symmetric(P)).values)
+    @test ev[2] ≈ 2.0 rtol = 1.0e-6          # the +2 eigenvalue survives
+    @test 0 < ev[1] < 1.0e-6 * ev[2] * 10    # the −1 eigenvalue lifted to ~relative floor
+    # already-PSD input is left essentially unchanged
+    G = [2.0 0.3; 0.3 1.0]
+    @test ext._project_psd(G) ≈ G rtol = 1.0e-6
+end
+
 @testset "PULL: predmean input-Jacobian matches FD" begin
     k = Magpie._kernel(0.0, 0.0); Z = [[x] for x in range(-2, 2; length = 6)]
     gp = update(ExactGP(k; noise = 1.0e-6), Z, sinpi.(first.(Z)))

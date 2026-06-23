@@ -405,8 +405,20 @@ field_mean(gps, u) = [predmean(g, u) for g in gps]
 pull_jacobian(gps, u) = ForwardDiff.jacobian(uu -> field_mean(gps, uu), u)
 field_var(gps, u) = Diagonal([only(AbstractGPs.var(g, [u])) for g in gps])
 
+# Project a symmetric matrix onto the PSD cone with a small RELATIVE floor, so the
+# result is a valid (positive-definite) covariance. Forward-only path — never
+# differentiated (see eval.jl header) — so `eigen` is unconstrained here.
+function _project_psd(Σ::AbstractMatrix)
+    S = Symmetric(Matrix(Σ))
+    E = eigen(S)
+    λmax = maximum(E.values)
+    fl = λmax > 0 ? 1.0e-10 * λmax : eps()      # relative floor ⇒ PD output, cond ≤ 1e10
+    λ = max.(E.values, fl)
+    return Matrix(Symmetric(E.vectors * Diagonal(λ) * E.vectors'))
+end
+
 """
-    pull_propagate(gps, u0, ts; buffer=20) -> (μs, Σs)
+    pull_propagate(gps, u0, ts; buffer=typemax(Int)) -> (μs, Σs)
 
 Propagate a Gaussian uncertainty (μ, Σ) forward through the GP field via a corrected
 moment-matching recurrence (no ODE solver). `gps` is a `Vector{ExactGP}` (one per output
@@ -423,9 +435,10 @@ Note: the field-variance term is h²·Vₙ — Euler `x→x+h·f` gives `Var(h·
 white-noise rate h·Vₙ). Exact linear-field oracle is eq 21b Σ(t)=(β/a²)(1−e^{at})² (coherent),
 not the white-noise (β/−2a)(1−e^{2at}); the cross-cov Dₙ realizes the coherence ("past matters").
 """
-function pull_propagate(gps, u0, ts; buffer::Int = 20)
+function pull_propagate(gps, u0, ts; buffer::Int = typemax(Int))
     d = length(u0); μ = collect(float.(u0)); Σ = zeros(d, d)
     μs = [copy(μ)]; Σs = [copy(Σ)]; histμ = [copy(μ)]; histA = Matrix{Float64}[]
+    nproj = 0
     for n in 1:(length(ts) - 1)
         h = ts[n + 1] - ts[n]
         A = I + h .* pull_jacobian(gps, μ)
@@ -433,13 +446,14 @@ function pull_propagate(gps, u0, ts; buffer::Int = 20)
         Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
         # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
         # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
-        Σ = Matrix(Symmetric(A * Σ * A' + h^2 .* Matrix(V) + h .* (A * Dn + Dn' * A')))
-        for k in 1:d
-            Σ[k, k] < 0 && (@warn "PULL: negative variance clamped" step = n; Σ[k, k] = eps())
-        end
+        Σraw = Matrix(Symmetric(A * Σ * A' + h^2 .* Matrix(V) + h .* (A * Dn + Dn' * A')))
+        minev = minimum(eigen(Symmetric(Σraw)).values)
+        Σ = _project_psd(Σraw)
+        minev < 0 && (nproj += 1)
         μ = μ + h .* field_mean(gps, μ)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
     end
+    nproj > 0 && @warn "PULL: projected $nproj/$(length(ts) - 1) step(s) onto the PSD cone (indefinite moment-matched Σ)"
     return μs, Σs
 end
 
@@ -457,7 +471,7 @@ runs back to lo. The key index fixes vs the original buggy loop:
   - `npast` (not `length(histμ)`) as the upper bound — excludes the self-term.
   - `histA[i]` (not `histA[i-1]`) — correct Jacobian at past state i.
 """
-function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = 20)
+function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = typemax(Int))
     Dn = zeros(d, d)
     buffer == 0 && return Dn
     npast = length(histμ) - 1                      # exclude the current state (self term)
@@ -474,13 +488,13 @@ function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = 20)
 end
 
 """
-    _pull_Dn_sequence(gps, u0, ts; buffer=20) -> Vector{Matrix}
+    _pull_Dn_sequence(gps, u0, ts; buffer=typemax(Int)) -> Vector{Matrix}
 
 Internal: propagate the mean path and return the per-step Dₙ sequence (one matrix per
 time step, length = length(ts)-1). Used by tests to assert the cross-cov telescope
 against a brute-force reference in a non-constant-Jacobian regime.
 """
-function _pull_Dn_sequence(gps, u0, ts; buffer::Int = 20)
+function _pull_Dn_sequence(gps, u0, ts; buffer::Int = typemax(Int))
     d = length(u0); μ = collect(float.(u0))
     histμ = [copy(μ)]; histA = Matrix{Float64}[]; Dns = Matrix{Float64}[]
     for n in 1:(length(ts) - 1)
@@ -575,12 +589,15 @@ Propagate uncertainty through a GP vector field (one `ExactGP` per output dimens
 - `method=Pathwise(n=N)` — Monte-Carlo ensemble of `N` decoupled GP samples integrated as plain ODEs.
 
 Returns `(μs, Σs)` for PULL, or an `N × d × length(ts)` array for Pathwise.
+
+`buffer`: number of past cross-covariance terms retained (default: full history); a finite
+value biases Σ downward.
 """
 function Magpie.propagate(
         gps::AbstractVector{<:ExactGP}, u0, tspan;
         method = Magpie.PULL(),
         ts = collect(range(tspan...; length = 21)),
-        buffer = 20
+        buffer = typemax(Int)
     )
     method isa Magpie.PULL && return pull_propagate(gps, u0, ts; buffer)
     return _pathwise(gps, u0, tspan, ts, method)
@@ -606,12 +623,15 @@ _pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise) =
 Propagate uncertainty through a sparse GP vector field (one `SparseGP` per output dimension).
 PULL uses `pull_propagate` (unchanged — `SparseGP` implements `predmean`/`var`/`cov`).
 Pathwise draws from the whitened variational posterior and integrates as plain ODEs.
+
+`buffer`: number of past cross-covariance terms retained (default: full history); a finite
+value biases Σ downward.
 """
 function Magpie.propagate(
         sgps::AbstractVector{<:SparseGP}, u0, tspan;
         method = Magpie.PULL(),
         ts = collect(range(tspan...; length = 21)),
-        buffer = 20
+        buffer = typemax(Int)
     )
     method isa Magpie.PULL && return pull_propagate(sgps, u0, ts; buffer)
     return _pathwise_svgp(sgps, u0, tspan, ts, method)
@@ -654,7 +674,7 @@ function Magpie.propagate(
         cf::Magpie.CompositeField, u0, tspan;
         method = Magpie.Pathwise(128),
         ts = collect(range(tspan...; length = 21)),
-        buffer = 20
+        buffer = typemax(Int)
     )
     if method isa Magpie.PULL
         error(
