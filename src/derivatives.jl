@@ -47,11 +47,12 @@ function _prior_grad_var(k, x)
 end
 
 # Analytic prior gradient variance for norm-singular kernels where AD NaNs at r=0.
-# σ²·(c/ℓ²) with c=5/3 (Matérn-5/2), c=1 (Matérn-3/2). Add families here as needed.
+# Var[∂ᵢf] = -2σ²·ψ'(0)/ℓ², ψ the kernel as a function of squared distance: c=5/3 (Matérn-5/2),
+# c=3 (Matérn-3/2). Verified by central differences of the kernel. Add families here as needed.
 function _prior_grad_var_const(k)
     bk = _basekernel(k); ℓ = _lengthscale(k); σ² = _outputscale(k)
     bk isa Matern52Kernel && return 5σ² / (3 * ℓ^2)
-    bk isa Matern32Kernel && return σ² / ℓ^2
+    bk isa Matern32Kernel && return 3σ² / ℓ^2
     error(
         "grad_predict: prior gradient variance is NaN under AD for $(typeof(bk)) " *
             "(norm-singular at r=0) and no analytic constant is registered; add one to _prior_grad_var_const"

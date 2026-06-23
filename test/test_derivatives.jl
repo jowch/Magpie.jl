@@ -39,6 +39,22 @@ end
     @test all(Σfar .≈ 5 / (3ℓ^2))      # Matérn-5/2 analytic prior gradient variance, σ²=1
 end
 
+@testset "Matérn-3/2 prior gradient variance (analytic constant)" begin
+    # Matérn-3/2 is norm-singular at r=0 (AD NaNs), so the prior gradient variance uses the
+    # analytic per-family constant. The correct value is 3σ²/ℓ² (verified by central differences
+    # of the kernel) — a hand-derived constant is exactly what needs an explicit value test.
+    Random.seed!(6)
+    ℓ = 0.7
+    X = [randn(2) for _ in 1:8]; y = randn(8)
+    g = update(ExactGP(with_lengthscale(Matern32Kernel(), ℓ); noise = 1.0e-6), X, y)
+    _, Σfar, _ = grad_predict(g, [50.0, 50.0])
+    @test all(Σfar .≈ 3 / ℓ^2)                        # far from data → prior, σ²=1
+    σ² = 4.0
+    g2 = update(ExactGP(σ² * with_lengthscale(Matern32Kernel(), ℓ); noise = 1.0e-6), X, y)
+    _, Σfar2, _ = grad_predict(g2, [50.0, 50.0])
+    @test all(Σfar2 .≈ 3σ² / ℓ^2)                     # scales linearly with the output scale
+end
+
 @testset "prior gradient variance scales with the kernel output scale σ²" begin
     # σ_f² must flow through grad_predict (the explore band) — not be hardcoded to unit variance.
     ℓ = 0.6; σ² = 9.0
