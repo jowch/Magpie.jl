@@ -62,9 +62,11 @@ plot(plt_contour, plt_surface; layout = (1, 2), size = (960, 410))
 # ## Fit a GP and extract the critical points
 #
 # Condition an [`ExactGP`](@ref) on a coverage sample of the DEM (a step-4 subgrid, ~350 points)
-# and fit the lengthscale and signal variance with [`Magpie.fit`](@ref). [`grad_predict`](@ref) then
+# and fit the lengthscales and signal variance with [`Magpie.fit`](@ref). [`grad_predict`](@ref) then
 # gives the posterior gradient mean `μ∇`, gradient variance `Σ∇`, and mean Hessian `H̄`; multi-start
 # Newton finds the gradient-zeros and [`classify`](@ref) types them by Morse index.
+# The terrain has a mild east–west vs north–south anisotropy (the cone is slightly elongated), so we
+# use an ARD squared-exponential kernel that fits a separate lengthscale per map direction.
 
 function critical_points(g, box; per_axis = 35, ε = 1.0e-3, restol = 5.0e-3, maxvar = 1.2)
     pol = [newton_polish(g, x; box = box, iters = 20) for x in grid_points(box; per_axis = per_axis)]
@@ -83,8 +85,8 @@ box = Box([0.0, 0.0], [1.0, 1.0])
 step = 4
 Xs = [[xs[c], ys[r]] for r in 1:step:nrow for c in 1:step:ncol]
 Ys = [Z[r, c]        for r in 1:step:nrow for c in 1:step:ncol]
-g = update(ExactGP(SqExponentialKernel() ∘ ScaleTransform(6.0); noise = 0.01), Xs, Ys)
-g = Magpie.fit(g; restarts = 5)
+g = update(ExactGP(with_lengthscale(SqExponentialKernel(), [1 / 6, 1 / 6]); noise = 0.01), Xs, Ys)
+g = Magpie.fit(g; restarts = 5)   # fits per-axis lengthscales for the terrain
 cps = critical_points(g, box)
 
 nmax = count(c -> c.kind == :max, cps)
