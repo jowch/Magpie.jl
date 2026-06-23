@@ -3,7 +3,7 @@ using OrdinaryDiffEq, SciMLSensitivity
 import DifferentiationInterface as DI
 import Mooncake
 using FiniteDifferences
-using Magpie: ExactGPField, FieldLayout, MultipleShooting
+using Magpie: ExactGPField, FieldLayout, MultipleShooting, CompositeField, SVGPField, SingleShooting, kmeans_anchors
 
 @testset "Stage 2: multiple-shooting gradient matches FD, ∂loss/∂s0 live" begin
     Random.seed!(3)
@@ -85,4 +85,32 @@ end
     rmse = sqrt(mean(sum(abs2, μs[k] .- X[:, k]) for k in 1:length(ts)))
     @info "train!→MS e2e" rmse
     @test rmse < 0.5                                  # MS training recovers the trajectory
+end
+
+@testset "Composite(Exact) + MultipleShooting trains (E)" begin
+    rng = MersenneTwister(11)
+    known(u, t) = -0.5 .* u                       # known linear decay
+    f!(du, u, p, t) = (du .= known(u, t); du .+= 0.3; nothing)  # truth: residual = +0.3
+    u0 = [1.0]; tspan = (0.0, 4.0); ts = collect(range(tspan...; length = 16))
+    target = Array(solve(ODEProblem(f!, u0, tspan), Tsit5(); saveat = ts))
+    X = target .+ 0.02 .* randn(rng, size(target))
+    Z = kmeans_anchors(X, 6; rng = MersenneTwister(3))
+    cf = CompositeField(known, ExactGPField(SqExponentialKernel(), Z; d = 1))
+    ret = train!(
+        cf, (ts, X); shooting = MultipleShooting(nsegments = 3),
+        adam_iters = 300, maxiters = 80, λ = 1 / 16
+    )
+    @test ret === cf                                          # returns the field (Task 1 contract)
+    res = predmean(posterior(cf)[1], [0.5])                   # reconstructed residual GP mean
+    @test isfinite(res)
+    @test abs(res - 0.3) < 0.25                               # recovers the +0.3 residual, not 0
+end
+
+@testset "SVGP + MultipleShooting fails clearly (E)" begin
+    Zs = [[x] for x in range(-1, 1; length = 5)]
+    svgp = SVGPField(SqExponentialKernel(), Zs; dout = 1)
+    ts = collect(range(0, 1; length = 8)); X = reshape(collect(range(1, 0.5; length = 8)), 1, 8)
+    @test_throws ArgumentError train!(svgp, (ts, X); shooting = MultipleShooting(nsegments = 2))
+    cf_svgp = CompositeField((u, t) -> zero(u), SVGPField(SqExponentialKernel(), Zs; dout = 1))
+    @test_throws ArgumentError train!(cf_svgp, (ts, X); shooting = MultipleShooting(nsegments = 2))
 end

@@ -41,6 +41,15 @@ per `v`, outside any trajectory/segment loop.
 # logσ_obs (the Gaussian-NLL observation-noise log-stds) lives at indices 3:(2+outputdim(field)) of `v`
 # and is consumed ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v`
 # and threads it into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via kw...).
+# MultipleShooting stores per-segment initial nodes s0 (dout×S) AFTER the field-param prefix in v;
+# SingleShooting has none. `length(field.v0)` is the prefix length (CompositeField forwards .v0 to gp).
+_ms_kwargs(field, ::Magpie.SingleShooting, v, dout) = NamedTuple()
+function _ms_kwargs(field, ms::Magpie.MultipleShooting, v, dout)
+    off = length(field.v0)
+    s0 = reshape(v[(off + 1):(off + dout * ms.nsegments)], dout, ms.nsegments)
+    return (s0 = s0,)
+end
+
 function field_loss(field, shooting, data; trace::Bool = true, kw...)
     dout = Magpie.outputdim(field)
     return function (v)
@@ -48,7 +57,7 @@ function field_loss(field, shooting, data; trace::Bool = true, kw...)
         uv = trace ? uvar : (_ -> zeros(dout))
         return shooting_data_term(
             field, shooting, (pf, rhs!), data;
-            logσ_obs = v[3:(2 + dout)], uvar = uv, kw...
+            logσ_obs = v[3:(2 + dout)], uvar = uv, _ms_kwargs(field, shooting, v, dout)..., kw...
         ) + Magpie.regularizer(field, v; kw...)
     end
 end
@@ -325,6 +334,16 @@ _train_init(field::SVGPField, trajs, ::Magpie.SingleShooting) = copy(field.v0)
 _train_init(cf::Magpie.CompositeField, trajs, shooting) =
     (tu = only(trajs); _init_vec(cf.gp, tu[2], tu[1], shooting))
 
+# MultipleShooting is wired for ExactGPField (and CompositeField with an Exact inner) only.
+# SVGP trains on the collapsed ELBO (a separate path) — segmenting it is a tracked follow-up.
+_assert_shooting_supported(field, shooting) = nothing
+_assert_shooting_supported(::SVGPField, ::Magpie.MultipleShooting) =
+    throw(ArgumentError("MultipleShooting is not supported for SVGPField. Use SingleShooting for SVGP fields. (SVGP + MultipleShooting is a tracked follow-up.)"))
+function _assert_shooting_supported(cf::Magpie.CompositeField, ms::Magpie.MultipleShooting)
+    getfield(cf, :gp) isa SVGPField && throw(ArgumentError("MultipleShooting is not supported for a CompositeField with an SVGPField inner field. Use SingleShooting. (SVGP + MultipleShooting is a tracked follow-up.)"))
+    return nothing
+end
+
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
 # Mutates `field.v0` in place (for `CompositeField`, the inner `gp.v0`) and returns the same `field`
@@ -337,6 +356,7 @@ function Magpie.train!(
         adam_lr = 0.05, adam_iters = 1000, optimizer = LBFGS(), maxiters = 200, kw...
     )
     trajs = _as_trajectories(data)
+    _assert_shooting_supported(field, shooting)
     tsp = tspan === nothing ? (first(trajs[1][1]), last(trajs[1][1])) : tspan
     loss = _train_loss(field, trajs, shooting, tsp; kw...)
     v_init = _train_init(field, trajs, shooting)
