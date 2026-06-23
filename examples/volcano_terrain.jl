@@ -129,9 +129,8 @@ plt_recovered
 #
 # Unlike a level-set or a targeted transition-state search, this example is **extraction on real
 # data**, not an active-learning contest — and deliberately so. The volcano's critical points are
-# **spatially clustered** on and around the summit ring, so (consistent with the Müller–Brown
-# enumeration finding) concentrating a budget by an acquisition does not beat plain coverage
-# sampling at enumerating them: the Newton extractor needs spread-out samples to represent every
+# **spatially clustered** on and around the summit ring, so concentrating a budget by an acquisition
+# does not beat plain coverage sampling at enumerating them: the Newton extractor needs spread-out samples to represent every
 # basin, and a tight cluster of features is exactly the case where coverage already does well. The
 # value on show is the **kernel-generic derivative-GP extraction and Morse classification working on
 # a real measured field** — recovering all three landform types — not an acquisition that wins.
@@ -142,9 +141,9 @@ plt_recovered
 # [`classify`](@ref) Morse typing — is a **general, kernel-generic** tool that applies unchanged from
 # an analytic chemical potential to a real digital elevation model: feed it samples of any smooth
 # scalar field and it returns the field's summits, basins, and passes, each typed by Morse index.
-# Pair it with the [Müller–Brown](muller_brown.md) example's `transition_state` for the active-learning
-# niche — targeted search where there is known structure to exploit — and the two together cover the
-# general extraction tool and the targeted active win.
+# This example maps *all* the landforms by coverage; the [Müller–Brown](muller_brown.md) example takes
+# the complementary, targeted route — a single-ended active search for one specific transition state —
+# so the two together cover the general extraction tool and the targeted active win.
 
 using Test                                                                       #src
 @test count(c -> c.kind == :max, cps) ≥ 1   ## a summit (maximum) is recovered #src

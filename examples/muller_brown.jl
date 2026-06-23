@@ -258,8 +258,8 @@ hline!(plt_conv, [0.1]; lc = :gray, ls = :dot, lw = 1, label = "0.1 threshold")
 # ## Takeaway
 #
 # The single-ended loop — climb the softest GP mode from `MC_min`, evaluate the true potential
-# at the predicted saddle and a gradient-uncertainty point, repeat — locates `S2` in roughly
-# 30 true `f`-evaluations, well below the 0.1 localization threshold. The random baseline, with
+# at the predicted saddle and a gradient-uncertainty point, repeat — locates `S2` in a few dozen
+# true `f`-evaluations, well below the 0.1 localization threshold. The random baseline, with
 # no notion of which saddle it is after, does not reliably find it at the same budget. The
 # Hessian diagnostic (one negative eigenvalue) confirms the located point is a genuine
 # first-order transition state.
