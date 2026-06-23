@@ -1,12 +1,11 @@
 # # Data efficiency with BinaryBALD: learning curves on a checkerboard
 #
 # Active learning earns its keep only when each observation is **expensive**.
-# A drug-discovery ADMET panel runs roughly \$3k–\$8k per compound; synchrotron
-# beam time costs several hundred dollars per hour; expert image labeling can consume
-# person-years.  When labels are cheap and abundant, a larger passively-collected
-# dataset simply wins — standard ML is the right tool.  But when each query
-# has a real cost, the question is no longer *how accurate can we get?* but
-# **how many queries does it take to reach a target accuracy?**
+# A drug-discovery ADMET panel runs roughly \$3k–\$8k per compound; when labels
+# are cheap and abundant, a larger passively-collected dataset simply wins.
+# But when each query has a real cost, the question is no longer
+# *how accurate can we get?* but **how many queries does it take to reach a
+# target accuracy?**
 #
 # This vignette makes that question concrete.  We compare two arms on a
 # checkerboard classification task:
@@ -50,6 +49,9 @@ box = Box([-2.0, -2.0], [2.0, 2.0])
 # up to budget 40.  Sharing the cold start ensures a fair paired comparison.
 # Averaging over 10 seeds gives stable mean curves and honest ±1 SD bands —
 # the reproducibility literature shows single-run AL claims are often noise.
+#
+# The classifier's lengthscale is now fitted: every 10 queries we re-optimize
+# the Laplace evidence to adapt the kernel to the accumulated data.
 
 ## Fixed held-out test set, seeded once
 Random.seed!(0)
@@ -57,7 +59,7 @@ Xtest = [4 .* rand(2) .- 2 for _ in 1:400]
 ytest = label.(Xtest)
 acc(g) = sum((predmean(g, p) > 0) == yt for (p, yt) in zip(Xtest, ytest)) / length(Xtest)
 
-function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4)
+function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4, refit_every = 10)
     Random.seed!(seed)
     cold = [4 .* rand(2) .- 2 for _ in 1:10]    # paired: same seed ⇒ identical cold start for both arms
     al = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), ℓ)), BinaryBALD())
@@ -65,9 +67,10 @@ function learning_curve(seed; bald::Bool, B = 40, ℓ = 0.4)
         observe!(al, x, label(x))
     end
     accs = Float64[]
-    for _ in 1:B
+    for t in 1:B
         x = bald ? acquire(al; over = box) : (4 .* rand(2) .- 2)   # BALD-selected vs uniform-random
         observe!(al, x, label(x))
+        refit_every > 0 && t % refit_every == 0 && fit!(al)
         push!(accs, acc(posterior_gp(al)))
     end
     return accs
@@ -128,13 +131,9 @@ hline!(
 # ## Figure 2 — snapshot at budget 40 (seed 1)
 #
 # The latent GP mean `predmean(g, p)` is the pre-sigmoid score: positive in
-# `label = true` cells, negative in `label = false` cells.  With the `:RdBu`
-# map, blue marks the positive class and red the negative; the true checkerboard
-# boundaries are overlaid in black.  The latent mean has recovered the
-# alternating four-cell structure.  White dots are the 40 BALD queries (after the
-# 10-point cold start): rather than hugging any single contour, BinaryBALD
-# spreads them to reduce uncertainty across the disconnected regions — an
-# information-driven coverage that lets it resolve the whole pattern within budget.
+# `label = true` cells, negative in `label = false` cells.  Blue marks the
+# positive class, red the negative; the true checkerboard boundaries are overlaid
+# in black.  White dots are the 40 BALD queries (after the 10-point cold start).
 
 ## Reproduce seed-1 BALD run for the snapshot
 Random.seed!(1)
@@ -143,11 +142,9 @@ al1 = ActiveLearner(LaplaceGP(with_lengthscale(SqExponentialKernel(), 0.4)), Bin
 for x in cold1
     observe!(al1, x, label(x))
 end
-for _ in 1:40
-    x = acquire(al1; over = box)
-    observe!(al1, x, label(x))
-end
+run!(al1, label; budget = 40, refit_every = 10, over = box)
 g1 = posterior_gp(al1)
+@info "fitted lengthscale" ℓ = round(Magpie._lengthscale(g1.prior.kernel); digits = 3)
 
 xs = range(-2, 2; length = 50)
 ys = range(-2, 2; length = 50)
