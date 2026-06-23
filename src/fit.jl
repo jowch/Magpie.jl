@@ -25,6 +25,14 @@ _basekernel(k) = k
 _basekernel(k::KernelFunctions.TransformedKernel) = _basekernel(k.kernel)
 _basekernel(k::KernelFunctions.ScaledKernel) = _basekernel(k.kernel)
 
+# Does the kernel tree contain a scale factor (ScaledKernel)? Used to warn when a composite
+# kernel has no tunable σ_f² leaf (fit would otherwise pin the signal variance at 1 silently).
+_has_scale(k::KernelFunctions.ScaledKernel) = true
+_has_scale(k::KernelFunctions.KernelSum) = any(_has_scale, k.kernels)
+_has_scale(k::KernelFunctions.KernelProduct) = any(_has_scale, k.kernels)
+_has_scale(k::KernelFunctions.TransformedKernel) = _has_scale(k.kernel)
+_has_scale(k) = false
+
 
 # AutoForwardDiff is fast and correct for SqExponential; Matérn kernels NaN under ForwardDiff at
 # coincident points (sqrt(0) non-differentiable), so default them to Mooncake (the project's
@@ -107,6 +115,9 @@ function fit(g::ExactGP; restarts::Int = 1, ad = nothing, ℓ_prior = :auto)
                 "Got $(typeof(g.prior.kernel)).",
         )
     )
+    if (k0 isa KernelFunctions.KernelSum || k0 isa KernelFunctions.KernelProduct) && !_has_scale(k0)
+        @warn "fit: this composite kernel has no scale factor, so the signal variance σ_f² is fixed at 1 and not tuned. Add a scale factor (e.g. `1.0 * k`) to a component to calibrate it." maxlog = 1
+    end
     ad === nothing && (ad = _default_ad(k0))
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
     noise = g.noise; meanfn = g.prior.mean

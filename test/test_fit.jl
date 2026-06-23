@@ -83,3 +83,16 @@ end
     @test nlml(g) ≤ nlml(g0) + 1.0e-6                    # composite fit improved the objective
     @test g.prior.kernel isa KernelFunctions.KernelSum   # structure preserved through destructure/rebuild
 end
+
+@testset "fit warns when a composite kernel has no scale factor" begin
+    using Magpie: _has_scale
+    kbare = with_lengthscale(SqExponentialKernel(), 0.8) + with_lengthscale(Matern32Kernel(), 0.8)
+    kscaled = 1.0 * with_lengthscale(SqExponentialKernel(), 0.8) + 1.0 * with_lengthscale(Matern32Kernel(), 0.8)
+    @test _has_scale(kbare) == false
+    @test _has_scale(kscaled) == true
+    @test _has_scale(1.0 * with_lengthscale(SqExponentialKernel(), 0.8)) == true   # scalar (scaled) case
+    Random.seed!(13)
+    X = [randn(2) for _ in 1:30]; y = [sum(abs2, xi) for xi in X]
+    g0 = Magpie.update(ExactGP(kbare; noise = 1.0e-3), X, y)
+    @test_logs (:warn,) match_mode = :any fit(g0)        # bare composite warns
+end
