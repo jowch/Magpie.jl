@@ -9,4 +9,5 @@ using Test
     include("test_exemplar_critpoints.jl")
     include("test_saddle.jl")
     include("test_multioutput.jl")
+    include("test_ardkernels.jl")
 end

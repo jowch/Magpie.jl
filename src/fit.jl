@@ -3,8 +3,22 @@ using Optimisers: destructure
 
 # Peel ScaledKernel/TransformedKernel wrappers to read hyperparameters.
 # ℓ from with_lengthscale(k, ℓ) == k ∘ ScaleTransform(1/ℓ); σ² from `c * k` == ScaledKernel.
-_lengthscale(k) = 1 / only(k.transform.s)
 _lengthscale(k::KernelFunctions.ScaledKernel) = _lengthscale(k.kernel)
+_lengthscale(k::KernelFunctions.TransformedKernel) = _ls_from_transform(k.transform)
+_lengthscale(k) = throw(
+    ArgumentError(
+        "no scalar lengthscale for a kernel of type $(nameof(typeof(k))); grad_predict's analytic " *
+            "prior-gradient-variance and LocalPenalization's radius require an isotropic " *
+            "`with_lengthscale` kernel (optionally scaled).",
+    ),
+)
+_ls_from_transform(t::KernelFunctions.ScaleTransform) = 1 / only(t.s)
+_ls_from_transform(t) = throw(
+    ArgumentError(
+        "no scalar lengthscale for an ARD/$(nameof(typeof(t))) transform; grad_predict and " *
+            "LocalPenalization are scalar-lengthscale only.",
+    ),
+)
 _outputscale(k) = 1.0
 _outputscale(k::KernelFunctions.ScaledKernel) = only(k.σ²) * _outputscale(k.kernel)
 _basekernel(k) = k
