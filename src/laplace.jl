@@ -64,16 +64,29 @@ function _laplace_fit(prior, x, y_bool)
     return a, W, L
 end
 
+function _to_labels(y)
+    eltype(y) === Bool && return collect(Bool, y)
+    vals = unique(y)
+    Set(vals) ⊆ Set((0, 1)) && return Bool[yi == 1 for yi in y]
+    Set(vals) ⊆ Set((-1, 1)) && return Bool[yi == 1 for yi in y]
+    throw(ArgumentError("LaplaceGP labels must encode two classes as Bool, {0,1}, or {-1,+1}; got value set $(sort(vals))"))
+end
+
 """
-    update(g::LaplaceGP, X, y::AbstractVector{Bool}) -> LaplaceGP
+    update(g::LaplaceGP, X, y) -> LaplaceGP
 
 Condition the classifier on new labelled inputs `(X, y)`. Because the Laplace MAP
 is re-fit from scratch, the new data is appended to the stored history and the MAP
 solve (`_laplace_fit`) is rerun over the full set.
+
+Labels `y` may be `Bool`, `{0,1}` integers, or `{-1,+1}` integers; they are coerced
+to `Bool` before fitting.
 """
-function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector{Bool})
+function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector)
+    yb = _to_labels(y)
+    _validate_obs(X, yb)
     xall = vcat(g.x, collect(X))
-    yall = vcat(g.y, y)
+    yall = vcat(g.y, yb)
     a, W, L = _laplace_fit(g.prior, xall, yall)
     return LaplaceGP(g.prior, xall, yall, a, W, L)
 end

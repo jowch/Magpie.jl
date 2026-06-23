@@ -89,6 +89,28 @@ function Statistics.cov(g::ExactGP, xs::AbstractVector)
     return _hasdata(g) ? c .- Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : c
 end
 
+_allfinite(v::Number) = isfinite(v)
+_allfinite(v) = all(isfinite, v)
+_inputdim(v::Number) = 1
+_inputdim(v) = length(v)
+
+"""
+    _validate_obs(X, y)
+
+Validate an observation batch before conditioning: equal counts, non-empty, all-finite,
+and consistent input dimension. Throws `ArgumentError` with an actionable message.
+"""
+function _validate_obs(X, y)
+    length(X) == length(y) ||
+        throw(ArgumentError("observation count mismatch: $(length(X)) inputs vs $(length(y)) values"))
+    isempty(X) && throw(ArgumentError("cannot condition a GP on an empty observation set"))
+    all(_allfinite, X) || throw(ArgumentError("input set contains non-finite (NaN/Inf) values"))
+    all(_allfinite, y) || throw(ArgumentError("observed values contain non-finite (NaN/Inf) values"))
+    allequal(_inputdim(x) for x in X) ||
+        throw(ArgumentError("inputs have inconsistent dimension: $(unique(_inputdim(x) for x in X))"))
+    return nothing
+end
+
 """
     update(g::ExactGP, X, y) -> ExactGP
 
@@ -99,6 +121,7 @@ Cholesky factor incrementally via `AbstractGPs.update_chol`. A scalar `y` condit
 on a single point.
 """
 function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
+    _validate_obs(X, y)
     _hasdata(g) && return _update_incremental(g, X, y)
     xnew = collect(X)
     δnew = y .- AbstractGPs.mean(g.prior, xnew)

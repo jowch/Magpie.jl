@@ -43,6 +43,7 @@ input/value or a batch (a vector of inputs with a matching vector of values).
 function observe!(al::ActiveLearner, X, Y)
     X_batch = _isbatch(X) ? X : [X]
     Y_batch = Y isa AbstractVector ? Y : [Y]
+    _validate_obs(X_batch, Y_batch)
     append!(al.Xs, X_batch); append!(al.Ys, Y_batch)
     al.gp = Magpie.update(al.gp, X_batch, Y_batch)
     return al

@@ -16,7 +16,15 @@ abstract type AcquisitionDomain end
 Axis-aligned box domain with lower and upper bounds `lb`, `ub` (per-dimension vectors).
 """
 struct Box{T} <: AcquisitionDomain
-    lb::T; ub::T
+    lb::T
+    ub::T
+    function Box(lb::T, ub::T) where {T}
+        length(lb) == length(ub) ||
+            throw(ArgumentError("Box bounds differ in length: lb has $(length(lb)), ub has $(length(ub))"))
+        all(lb .≤ ub) ||
+            throw(ArgumentError("Box requires lb .≤ ub; violated at dimension(s) $(findall(lb .> ub))"))
+        return new{T}(lb, ub)
+    end
 end
 
 """
@@ -59,6 +67,9 @@ SobolPolish(; n_candidates = 2048, n_restarts = 8, ad = AutoForwardDiff()) = Sob
 Enumerate a regular grid over `box` with `per_axis` points along each dimension.
 """
 function grid_points(box::Box; per_axis::Int = 50)
+    d = length(box.lb)
+    big(per_axis)^d > 1_000_000 &&
+        throw(ArgumentError("grid of $(per_axis)^$(d) points exceeds 10^6; use SobolPolish() or a Points domain for high-D boxes"))
     axes = [range(box.lb[i], box.ub[i]; length = per_axis) for i in eachindex(box.lb)]
     return [collect(p) for p in Iterators.product(axes...)] |> vec
 end

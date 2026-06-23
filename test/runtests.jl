@@ -1,5 +1,6 @@
 using Test
 @testset "Magpie" begin
+    include("test_validation.jl")
     include("test_spine.jl"); include("test_fit.jl"); include("test_ad.jl")
     include("test_derivatives.jl")
     include("test_acquisitions.jl"); include("test_laplace.jl")
