@@ -10,6 +10,11 @@ _basekernel(k) = k
 _basekernel(k::KernelFunctions.TransformedKernel) = _basekernel(k.kernel)
 _basekernel(k::KernelFunctions.ScaledKernel) = _basekernel(k.kernel)
 
+_kernelfamily(::SqExponentialKernel) = SqExponentialKernel()
+_kernelfamily(::Matern32Kernel) = Matern32Kernel()
+_kernelfamily(::Matern52Kernel) = Matern52Kernel()
+_kernelfamily(k) = throw(ArgumentError("fit supports SqExponential/Matern32/Matern52 base kernels; got $(typeof(k)). (grad_predict's derivative path covers the same set.)"))
+
 @doc raw"""
     nlml(g::ExactGP) -> Real
 
@@ -60,10 +65,11 @@ Pass `ℓ_prior=(μ, σ)` to set the prior centre/width in log-space explicitly,
 `ℓ_prior=nothing` for pure MLE (the pre-MAP behaviour). `σ_f²` is never penalized.
 
 !!! note
-    v1 assumes the prior kernel is a (scaled) `with_lengthscale(SqExponentialKernel(), ℓ)`.
+    `fit` supports `SqExponentialKernel`, `Matern32Kernel`, and `Matern52Kernel` base kernels
+    (the same set `grad_predict`'s derivative path covers). Throws `ArgumentError` for other families.
 """
-function fit(g::ExactGP; restarts::Int=1, ad=AutoForwardDiff(), ℓ_prior=:auto)
-    @assert _basekernel(g.prior.kernel) isa SqExponentialKernel "v1 fit assumes a (scaled) with_lengthscale(SqExponentialKernel(), ℓ)"
+function fit(g::ExactGP; restarts::Int = 1, ad = AutoForwardDiff(), ℓ_prior = :auto)
+    fam = _kernelfamily(_basekernel(g.prior.kernel))     # validates + returns a fresh base kernel of the same family
     X = g.x; y = g.δ .+ AbstractGPs.mean(g.prior, g.x)
     noise = g.noise; meanfn = g.prior.mean
     logℓ0 = log(_lengthscale(g.prior.kernel))
@@ -71,15 +77,15 @@ function fit(g::ExactGP; restarts::Int=1, ad=AutoForwardDiff(), ℓ_prior=:auto)
     pri = ℓ_prior === :auto ? (logℓ0, 0.75) : ℓ_prior            # (μ, σ) on logℓ, or nothing
     penalty(p) = pri === nothing ? zero(eltype(p)) : 0.5 * ((p[1] - pri[1]) / pri[2])^2
     # p = [logℓ, logσ²]; closure stays AD-compatible (no ParameterHandling unflatten).
-    mkkernel(p) = exp(p[2]) * with_lengthscale(SqExponentialKernel(), exp(p[1]))
-    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise=noise, mean=meanfn), X, y)) + penalty(p)
+    mkkernel(p) = exp(p[2]) * with_lengthscale(fam, exp(p[1]))
+    loss(p, _) = nlml(update(ExactGP(mkkernel(p); noise = noise, mean = meanfn), X, y)) + penalty(p)
     obj(p) = loss(p, nothing)
     best = g; best_obj = obj(p0)                                      # penalty(p0)=0 for :auto
     for r in 1:restarts
         start = r == 1 ? p0 : p0 .+ 0.1 .* randn(2)              # first run exact, rest jittered
-        prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb=[-6.0, -6.0], ub=[6.0, 6.0])
+        prob = OptimizationProblem(OptimizationFunction(loss, ad), start; lb = [-6.0, -6.0], ub = [6.0, 6.0])
         sol = solve(prob, LBFGS())
-        obj(sol.u) < best_obj && ((best, best_obj) = (update(ExactGP(mkkernel(sol.u); noise=noise, mean=meanfn), X, y), obj(sol.u)))
+        obj(sol.u) < best_obj && ((best, best_obj) = (update(ExactGP(mkkernel(sol.u); noise = noise, mean = meanfn), X, y), obj(sol.u)))
     end
     return best
 end

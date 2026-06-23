@@ -1,5 +1,6 @@
-using Magpie, AbstractGPs, KernelFunctions, Random, Test
+using Magpie, AbstractGPs, KernelFunctions, Random, Test, DifferentiationInterface
 using Magpie: ExactGP, fit, nlml, _lengthscale, _outputscale
+import Mooncake
 @testset "fit recovers a known lengthscale" begin
     Random.seed!(1)
     ktrue = with_lengthscale(SqExponentialKernel(), 0.5)
@@ -17,13 +18,13 @@ end
     # derivative/straddle acquisitions are miscalibrated on any function whose scale ≠ 1.
     Random.seed!(2)
     ktrue = 25.0 * with_lengthscale(SqExponentialKernel(), 0.7)
-    X = [[x] for x in range(-3, 3; length=50)]
-    y = rand(AbstractGPs.GP(ktrue)(X, 1e-4))
-    g0 = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 1.0); noise=1e-4), X, y)
+    X = [[x] for x in range(-3, 3; length = 50)]
+    y = rand(AbstractGPs.GP(ktrue)(X, 1.0e-4))
+    g0 = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 1.0); noise = 1.0e-4), X, y)
     @test _outputscale(g0.prior.kernel) ≈ 1.0           # starts at unit variance
-    g  = fit(g0; restarts=3)
+    g = fit(g0; restarts = 3)
     @test 5.0 < _outputscale(g.prior.kernel) < 125.0    # recovered within a factor ~5 of truth
-    @test nlml(g) ≤ nlml(g0) + 1e-6
+    @test nlml(g) ≤ nlml(g0) + 1.0e-6
 end
 
 @testset "fit lengthscale prior curbs small-n over-smoothing" begin
@@ -34,13 +35,25 @@ end
     # true feature scale instead. Stable across seeds; the gap is enormous (ratio ~1e-3).
     Random.seed!(7)
     f(x) = sinpi(3x[1])
-    X = [[x] for x in range(-1, 1; length=7)]        # very scarce, undersamples the feature
-    y = f.(X) .+ 1e-3 .* randn(length(X))
-    g0 = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.2); noise=1e-3), X, y)
+    X = [[x] for x in range(-1, 1; length = 7)]        # very scarce, undersamples the feature
+    y = f.(X) .+ 1.0e-3 .* randn(length(X))
+    g0 = Magpie.update(ExactGP(with_lengthscale(SqExponentialKernel(), 0.2); noise = 1.0e-3), X, y)
     g_map = fit(g0)                                  # default prior on (ℓ_prior=:auto)
-    g_mle = fit(g0; ℓ_prior=nothing)                 # pure MLE
+    g_mle = fit(g0; ℓ_prior = nothing)                 # pure MLE
     ℓmap = _lengthscale(g_map.prior.kernel); ℓmle = _lengthscale(g_mle.prior.kernel)
     @test ℓmap < 0.5 * ℓmle                          # robust margin (actual ratio ~1e-3)
     @test ℓmap < 1.0                                 # MAP resolves the feature
     @test ℓmle > 2.0                                 # MLE ran ℓ up — over-smoothed
+end
+
+@testset "fit is kernel-generic over supported families" begin
+    Random.seed!(42)
+    X = [randn(2) for _ in 1:40]; y = [sum(abs2, xi) for xi in X]
+    # Matérn kernels need Mooncake (ForwardDiff hits sqrt(0) at coincident points).
+    g52 = Magpie.update(ExactGP(with_lengthscale(Matern52Kernel(), 0.7); noise = 1.0e-3), X, y)
+    fitted = Magpie.fit(g52; ad = AutoMooncake(; config = nothing))
+    @test Magpie._basekernel(fitted.prior.kernel) isa Matern52Kernel    # family preserved, not swapped to RBF
+    @test Magpie.nlml(fitted) ≤ Magpie.nlml(g52)                         # fit improved (or matched) the objective
+    glin = Magpie.update(ExactGP(LinearKernel(); noise = 1.0e-4), X, y)    # unsupported family
+    @test_throws ArgumentError Magpie.fit(glin)
 end
