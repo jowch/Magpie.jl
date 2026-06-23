@@ -155,8 +155,11 @@ function shooting_data_term(
         sol = solve(ODEProblem(f!, ic, tsp, pf), solver; saveat = ts, sensealg)
         A = Array(sol)                                  # R2: Array(sol), never sol[:,i]
         # Divergence guard → finite sentinel (constant ⇒ zero gradient: "don't step here").
-        # Two failure modes: early termination (wrong shape) AND integration to a NaN/Inf
-        # state that still saves all `saveat` points (right shape, poisons the loss/gradient).
+        # SCOPE: this guards only the FORWARD solve (NaN/Inf state or wrong shape). It does
+        # NOT protect the Mooncake Cholesky-solve BACKWARD (potrs SingularException) — that
+        # throws out of DI.gradient and never reaches here. The RELATIVE jitter
+        # (exp(lognoise+2logσ) / field.jitter·σ²) is the SOLE backward guard; do not weaken it
+        # on the assumption this sentinel covers it.
         (size(A) == size(X) && all(isfinite, A)) || return convert(T, 1.0e6)
         sse += sum(abs2, A .- X)
         Nd += length(X)
