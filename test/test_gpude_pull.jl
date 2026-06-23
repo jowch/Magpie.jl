@@ -186,12 +186,16 @@ end
     rng = MersenneTwister(9)
     a = -0.35
     u0 = [1.0]; tspan = (0.0, 5.0); ts = collect(range(tspan...; length = 25))
-    X = Array(solve(ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0, tspan), Tsit5(); saveat = ts))
-    X .+= 0.04 .* randn(rng, size(X))
+    # Capture the clean trajectory first, then add observation noise for training.
+    # PULL propagates epistemic (field/state) uncertainty only — it does NOT model
+    # obs noise σ_obs — so coverage must be checked against the CLEAN truth, not
+    # the noisy observations (comparing against noisy obs correctly under-covers).
+    Xclean = Array(solve(ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0, tspan), Tsit5(); saveat = ts))
+    X = Xclean .+ 0.04 .* randn(rng, size(Xclean))
     Z = [collect(c) for c in eachcol(X[:, 1:6])]
     field = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 1)
     train!(field, (ts, X); adam_iters = 500, maxiters = 120, trace = true)
-    truth = [collect(c) for c in eachcol(X)]
+    truth = [collect(c) for c in eachcol(Xclean)]      # CLEAN trajectory, not noisy obs
     μs, Σs = propagate(field, u0, tspan; method = PULL(), ts = ts)
     # Every Σ is PSD-valid (Task 2/§3) and coverage is finite + not absurd.
     @test all(isposdef, Σs[2:end])
