@@ -129,3 +129,25 @@ end
 
     @test maximum(abs, s_at_Z .- u_vals) < 1.0e-4
 end
+
+@testset "per-dim σ_obs layout" begin
+    # ExactGPField, d=2: v0 prefix is [logℓ, logσ, logσ_obs(1), logσ_obs(2), w...]
+    Z = [[x] for x in range(-1, 1; length = 3)]
+    f = ExactGPField(Magpie._kernel(0.0, 0.0), Z; d = 2)
+    @test Magpie.outputdim(f) == 2
+    @test Magpie.nhyp(f) == 4
+    @test length(f.v0) == 4 + 3 * 2            # 2 hypers + 2 σ_obs + n*d weights
+    up = Magpie.unpack(f, f.v0)
+    @test up.logσ_obs isa AbstractVector
+    @test length(up.logσ_obs) == 2
+    @test up.logσ_obs ≈ fill(log(0.1), 2)
+    @test size(up.w) == (3, 2)                 # w-block read correctly after the wider prefix
+    # SVGPField, dout=2: prefix [logℓ, logσ, logσ_obs(1), logσ_obs(2), Z..., μ..., L_S...]
+    sf = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 2)
+    @test Magpie.outputdim(sf) == 2
+    @test Magpie.nhyp(sf) == 4
+    ups = Magpie.unpack(sf, sf.v0)
+    @test length(ups.logσ_obs) == 2
+    @test size(ups.Z) == (1, 3)                # D×M read correctly after wider prefix
+    @test size(ups.μ) == (3, 2)                # M×dout
+end
