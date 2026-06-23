@@ -503,6 +503,45 @@ function (s::DecoupledGPSample)(x::AbstractVector)
 end
 
 # ---------------------------------------------------------------------------
+# Frozen reparameterization noise for the sampled ELBO.
+# ---------------------------------------------------------------------------
+
+"""Number of random Fourier features used for the sampled-ELBO Matheron prior."""
+const SVGP_DRFF = 256
+
+"""
+    _svgp_sample_eps(field::SVGPField, nsamples::Int; seed::Int = 0) -> Vector{NamedTuple}
+
+Draw `nsamples` frozen reparameterization noise tuples for the sampled ELBO.
+Each entry has:
+  - `ω :: Array{Float64,3}` — shape `(D, Drff, dout)`: per-output spectral frequencies (unit scale)
+  - `b :: Vector{Float64}` — length `Drff`: shared RFF phase (NOT antithetic; same for positive/negative pair)
+  - `w :: Matrix{Float64}` — shape `(Drff, dout)`: per-output RFF weights (unit scale)
+  - `ind :: Matrix{Float64}` — shape `(M, dout)`: per-output inducing-point noise
+
+Antithetic pairing: the second half negates the Gaussian draws of the first half
+(`ω`, `w`, `ind`), keeping `b` shared. `nsamples` must be even.
+"""
+function _svgp_sample_eps(field::SVGPField, nsamples::Int; seed::Int = 0)
+    @assert iseven(nsamples) "nsamples must be even (antithetic pairing)"
+    half = nsamples ÷ 2
+    base = map(1:half) do s
+        r = Random.MersenneTwister(seed * 100_003 + s)
+        (
+            ω = randn(r, field.D, SVGP_DRFF, field.dout),   # per-output spectral noise
+            b = rand(r, SVGP_DRFF) .* (2π),                  # phase: NOT antithetic
+            w = randn(r, SVGP_DRFF, field.dout),              # per-output RFF weights
+            ind = randn(r, field.M, field.dout),              # per-output inducing noise
+        )
+    end
+    anti = map(base) do e
+        # Negate all Gaussian draws; keep b (phase is not antithetic)
+        (ω = -e.ω, b = e.b, w = -e.w, ind = -e.ind)
+    end
+    return vcat(base, anti)
+end
+
+# ---------------------------------------------------------------------------
 
 """
     kmeans_anchors(X, k; iters, rng) -> Vector{Vector{Float64}}

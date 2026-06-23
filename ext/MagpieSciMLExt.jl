@@ -150,6 +150,90 @@ function field_rhs(field::SVGPField, v)
     return (pf, rhs!, uvar)
 end
 
+"""
+    svgp_sample_rhs(field::SVGPField, v, e) -> (pf, rhs!, b)
+
+Build one Matheron (decoupled) GP-sample RHS at trained params `v` and frozen noise `e`
+(a NamedTuple from `Magpie._svgp_sample_eps`).
+
+Returns:
+  - `pf`: flat parameter vector threaded into the ODE (`logℓ, logσ, vec(ω), vec(w), vec(Z), vec(vcorr)`).
+    Trained params (`logℓ,logσ,Z,μ,L_S`) are never closure-captured (R1); only the frozen phase `b` and
+    per-output RFF sizes are constants in the closure.
+  - `rhs!(du, u, pf, t; known_physics)`: ODE RHS. Adds per output `i`: `wᵢᵀφᵢ(u) + Σⱼ k(u,Zⱼ)·vcorr[j,i]`.
+  - `b`: frozen RFF phase vector (length Drff); captured constant in `rhs!`.
+
+Matheron reparameterization:
+  `ω_i = e.ω[:,:,i] / ℓ`,  `w_i = σ · e.w[:,i]`
+  `u_s_i = L_ZZ · (μ_i + L_S_i · e.ind[:,i])`
+  `vcorr_i = K_ZZ⁻¹ · (u_s_i − Φw_i)`  where `Φw_i[j] = wᵢᵀ φᵢ(Zⱼ)`.
+
+Jitter: relative `field.jitter · σ²` on `K_ZZ` (Mooncake Cholesky-backward safety), via `_chol`.
+Dense matrix ops only on the AD path (no LowerTriangular backsolve): `LZZ = Matrix(C.L)`.
+Each output dimension has an independent RFF prior draw (per-output `ω/w`).
+"""
+function svgp_sample_rhs(field::SVGPField, v, e)
+    M, dout, D = field.M, field.dout, field.D
+    Drff = size(e.b, 1)          # number of RFF features (from frozen noise)
+    logℓ, logσ = v[1], v[2]
+    ℓ = exp(logℓ)
+    σ = exp(logσ)
+    σ2 = σ^2
+    k = Magpie._kernel(logℓ, logσ)
+    Z = Magpie.svgp_Z(field, v)  # D×M
+    Zvec = [Z[:, j] for j in 1:M]
+    # Frozen phase is shared (antithetic partner shares b too)
+    b = e.b                          # length Drff, constant capture — ok (R1)
+    # Relative jitter: field.jitter · σ² matches field_rhs convention
+    jit = field.jitter * σ2
+    C = _chol(kernelmatrix(k, Zvec) + jit * I)
+    LZZ = Matrix(C.L)               # dense for Mooncake-safe backsolve
+    μ = Magpie.svgp_μ(field, v)     # M×dout
+    # Per-output: scale the frozen unit noise to get trained ω/w, then compute vcorr.
+    ω_all = e.ω ./ ℓ                # D × Drff × dout
+    w_all = σ .* e.w                 # Drff × dout
+    vcorr = Matrix{eltype(v)}(undef, M, dout)
+    for i in 1:dout
+        ωi = ω_all[:, :, i]         # D × Drff
+        wi = w_all[:, i]             # Drff
+        rff_i(x) = sqrt(2 / Drff) .* cos.(ωi' * x .+ b)
+        Φwi = [dot(wi, rff_i(Zvec[j])) for j in 1:M]
+        Ls = Matrix(Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M))
+        u_s = LZZ * (μ[:, i] .+ Ls * e.ind[:, i])
+        vcorr[:, i] = C \ (u_s .- Φwi)
+    end
+    # Thread ALL trained information through pf (R1): logℓ, logσ, per-output ω (D×Drff×dout),
+    # per-output w (Drff×dout), Z (D×M), vcorr (M×dout). b is frozen and OK to capture.
+    pf = vcat(logℓ, logσ, vec(ω_all), vec(w_all), vec(Z), vec(vcorr))
+    function rhs!(du, u, _pf, t; known_physics)
+        du .= known_physics(u, t)
+        _logℓ = _pf[1]
+        _logσ = _pf[2]
+        kk = Magpie._kernel(_logℓ, _logσ)
+        off = 2
+        # Unpack per-output ω: D×Drff×dout
+        ω_r = reshape(_pf[(off + 1):(off + D * Drff * dout)], D, Drff, dout)
+        off += D * Drff * dout
+        # Unpack per-output w: Drff×dout
+        w_r = reshape(_pf[(off + 1):(off + Drff * dout)], Drff, dout)
+        off += Drff * dout
+        # Unpack Z: D×M
+        Z_r = reshape(_pf[(off + 1):(off + D * M)], D, M)
+        off += D * M
+        # Unpack vcorr: M×dout
+        vc = reshape(_pf[(off + 1):(off + M * dout)], M, dout)
+        for i in 1:dout
+            ωi_r = ω_r[:, :, i]                             # D × Drff
+            wi_r = w_r[:, i]                                 # Drff
+            prior_i = dot(wi_r, sqrt(2 / Drff) .* cos.(ωi_r' * u .+ b))
+            gp_i = sum(kk(u, @view Z_r[:, j]) * vc[j, i] for j in 1:M)
+            du[i] += prior_i + gp_i
+        end
+        return nothing
+    end
+    return (pf, rhs!, b)
+end
+
 # --- shooting_data_term: the ONLY place segmentation lives; field-agnostic. ---
 # Returns ONLY the data fit (no regularizer — field_loss adds it once, outside the loop).
 # `data` is always a Vector{<:Tuple} of (ts, X); single-shooting = a 1-element vector.
