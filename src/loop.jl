@@ -1,5 +1,5 @@
 """
-    ActiveLearner
+    ActiveLearner{TX, TY}
 
 Mutable state for an active-learning run: the current GP, the acquisition, and the
 accumulated query history.
@@ -10,19 +10,37 @@ accumulated query history.
     [`LocalPenalization`](@ref) over the live history)
   - `Xs`, `Ys`: accumulated query inputs and observed values, in query order
   - `acq_vals`: the acquisition score at each queried point
+  - `rng`: the random-number generator threaded through `acquire`/`run!`
 
 # Constructor
 
-    ActiveLearner(gp, acq)
+    ActiveLearner(gp, acq; rng=Random.default_rng())
 
 Start a learner from an (optionally unconditioned) GP and an acquisition. Both `gp` and
-`acq` are abstractly typed so they can be replaced in place during a run.
+`acq` are abstractly typed so they can be replaced in place during a run. `TX` and `TY`
+are inferred from `gp` (inputs are `Vector{Float64}`; values are `Float64` for `ExactGP`
+and `Bool` for `LaplaceGP`).
 """
-mutable struct ActiveLearner
-    gp::AbstractGPModel; acq::AcquisitionFunction
-    Xs::Vector{Any}; Ys::Vector{Any}; acq_vals::Vector{Float64}
+mutable struct ActiveLearner{TX, TY}
+    gp::AbstractGPModel              # abstract on purpose: concrete type changes on first update
+    acq::AcquisitionFunction         # abstract on purpose: changes when wrapped by LocalPenalization
+    Xs::Vector{TX}
+    Ys::Vector{TY}
+    acq_vals::Vector{Float64}
+    rng::AbstractRNG
 end
-ActiveLearner(gp, acq) = ActiveLearner(gp, acq, Any[], Any[], Float64[])
+
+# Observation element type implied by the GP kind (extended for multi-output in Phase 1.5).
+_obs_eltype(::ExactGP) = Float64
+_obs_eltype(::LaplaceGP) = Bool
+
+# Typed escape hatch: caller fixes the input/value element types.
+ActiveLearner{TX, TY}(gp, acq; rng = Random.default_rng()) where {TX, TY} =
+    ActiveLearner{TX, TY}(gp, acq, TX[], TY[], Float64[], rng)
+
+# Convenience: infer Vector{Float64} inputs and the value type from the GP.
+ActiveLearner(gp, acq; rng = Random.default_rng()) =
+    ActiveLearner{Vector{Float64}, _obs_eltype(gp)}(gp, acq; rng = rng)
 
 """The current posterior GP held by the learner."""
 posterior_gp(al::ActiveLearner) = al.gp
@@ -64,7 +82,7 @@ Batch acquisition (`q > 1`) is not yet implemented.
 """
 function acquire(al::ActiveLearner; over, maximizer = default_for(over), q::Int = 1)
     q == 1 || error("batch acquisition (q>1) not yet implemented; use q=1")
-    return acquire(al.gp, resample(al.acq); over = over, maximizer = maximizer)
+    return acquire(al.gp, resample(al.acq, al.rng); over = over, maximizer = maximizer)
 end
 
 """
@@ -78,7 +96,7 @@ every `refit_every` rounds (`0` disables refitting).
 function run!(al::ActiveLearner, oracle; budget::Int, over, stop = al -> false, refit_every::Int = 0)
     for t in 1:budget
         stop(al) && break
-        acq = resample(al.acq)
+        acq = resample(al.acq, al.rng)
         x = acquire(al.gp, acq; over = over)
         push!(al.acq_vals, acq(al.gp, x))
         observe!(al, x, oracle(x))
