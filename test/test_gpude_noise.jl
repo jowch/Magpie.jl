@@ -82,6 +82,23 @@ end
     @test 0.7 * σ2 < σobs[2] < 1.6 * σ2
 end
 
+@testset "dout>1 σ_obs slots have live gradients" begin
+    rng = MersenneTwister(5)
+    Atrue = [-0.3 0.0; 0.0 -0.5]
+    u0 = [1.0, 1.0]; tspan = (0.0, 3.0); ts = collect(range(tspan...; length = 20))
+    Xc = Array(solve(ODEProblem((du, u, p, t) -> (du .= Atrue * u), u0, tspan), Tsit5(); saveat = ts))
+    X = Xc .+ 0.03 .* randn(rng, size(Xc))
+    Z = Magpie.kmeans_anchors(X, 6; rng = MersenneTwister(2))
+    field = SVGPField(SqExponentialKernel(), Z; dout = 2)
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    loss = ext.svgp_elbo_loss(field, [(ts, X)]; tspan = tspan)
+    v = copy(field.v0)
+    fd(i) = (vp = copy(v); vp[i] += 1.0e-5; vm = copy(v); vm[i] -= 1.0e-5; (loss(vp) - loss(vm)) / 2.0e-5)
+    # v = [logℓ, logσ, logσ_obs(1..dout), …] ⇒ σ_obs slots are indices 3 and 4 for dout=2.
+    @test abs(fd(3)) > 1.0e-6
+    @test abs(fd(4)) > 1.0e-6
+end
+
 @testset "Gaussian NLL normalizer: argmin over logσ_obs = ½·log(SSE/Nd)" begin
     # Pure (no-solver) oracle for the load-bearing normalizer. The σ_obs identifiability rests
     # entirely on `_gaussian_nll`: argmin over logσ_obs must equal the residual RMS, and the

@@ -341,6 +341,9 @@ Default `jitter=1e-4` is a relative factor (not absolute).
 """
 function L_ZZ_factor(prior, Z; jitter = 1.0e-4)
     K = AbstractGPs.cov(prior, Z)
+    # NOTE: relative jitter uses the prior's mean diagonal as the scale. This assumes a
+    # stationary kernel (constant k(z,z), e.g. SE) so the per-row jitter equals the ext's
+    # exact-σ² jitter. For a non-stationary kernel the two would diverge — revisit then.
     s2 = sum(i -> K[i, i], 1:size(K, 1)) / size(K, 1)   # ≈ σ² (mean diagonal)
     return _chol(K + (jitter * s2) * I).L
 end

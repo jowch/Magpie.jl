@@ -183,6 +183,7 @@ end
 end
 
 @testset "SparseGP PULL coverage is sane" begin
+    Random.seed!(9)
     rng = MersenneTwister(9)
     a = -0.35
     u0 = [1.0]; tspan = (0.0, 5.0); ts = collect(range(tspan...; length = 25))

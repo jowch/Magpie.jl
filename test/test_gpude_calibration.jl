@@ -1,8 +1,5 @@
-using Test, Magpie, LinearAlgebra, Statistics, Random
+using Test, Magpie, Statistics, Random
 using OrdinaryDiffEq, SciMLSensitivity
-using KernelFunctions, AbstractGPs
-
-ext = Base.get_extension(Magpie, :MagpieSciMLExt)
 
 @testset "SVGP calibration: trace correction → calibrated + sharp" begin
     rng = MersenneTwister(2026)

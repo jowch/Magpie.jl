@@ -18,7 +18,11 @@ ext = Base.get_extension(Magpie, :MagpieSciMLExt)
     ts = collect(range(0.0, 5.0; length = 20))
     X = zeros(1, length(ts))                  # data is irrelevant; we only check the sentinel
     loss = ext.field_loss(field, Magpie.SingleShooting(), [(ts, X)]; u0 = [0.0], tspan = (0.0, 5.0))
-    L = loss(v)
+    # Suppress the dt_NaN solver warning emitted by Tsit5 on the NaN-poisoned RHS — it is
+    # expected behaviour (the guard is designed to catch exactly this blow-up).
+    L = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        loss(v)
+    end
     @test isfinite(L)                         # guard converts blow-up to a finite sentinel
     @test L ≥ 1.0e6                            # the sentinel value (plus regularizer)
 end
