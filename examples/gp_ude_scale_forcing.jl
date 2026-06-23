@@ -182,8 +182,7 @@ cov90_pull = coverage(truth_vecs, μs_pull, Σs_pull; level = 0.9)
 ens = propagate(sgps, u0_test, tspan; method = Pathwise(n = 128), ts = ts)
 
 nsteps = length(ts)
-μs_path = [vec(mean(ens[:, :, k]; dims = 1)) for k in 1:nsteps]
-Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]
+μs_path, Σs_path = pathwise_moments(ens)
 cov90_path = coverage(truth_vecs, μs_path, Σs_path; level = 0.9)
 @info "Held-out-IC Pathwise coverage at 90% nominal (nominal-or-conservative)" cov90_path
 

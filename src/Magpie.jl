@@ -42,6 +42,6 @@ export unpack, regularizer, posterior, posterior_gps, posterior_sparsegps
 export SingleShooting, MultipleShooting, PULL, Pathwise, DecoupledGPSample, kmeans_anchors
 export build_decoupled_sample
 export svgp_kl, nLS, unpack_LS, L_ZZ_factor, svgp_moments
-export coverage, field_error, recovery_metrics, ridge_slice
+export coverage, field_error, recovery_metrics, ridge_slice, pathwise_moments
 
 end

@@ -201,8 +201,7 @@ truth_vecs = [target_test[:, i] for i in 1:length(ts_test)]
 # Pathwise ensemble on the FULL composite field (known_physics + GP residual)
 ens_cf = propagate(cf, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
 nsteps = length(ts_test)
-μs_path = [vec(mean(ens_cf[:, :, k]; dims = 1)) for k in 1:nsteps]
-Σs_path = [cov(ens_cf[:, :, k])               for k in 1:nsteps]
+μs_path, Σs_path = pathwise_moments(ens_cf)
 cov90_path = coverage(truth_vecs, μs_path, Σs_path; level = 0.9)
 @info "CompositeField Pathwise coverage at 90% (full field: known_physics + GP residual)" cov90_path
 

@@ -168,3 +168,23 @@ function ridge_slice(loss, v::AbstractVector; idx::Tuple{Int, Int} = (1, 2), gri
     end
     return out
 end
+
+# ---------------------------------------------------------------------------
+# pathwise_moments
+# ---------------------------------------------------------------------------
+
+"""
+    pathwise_moments(ens) -> (μs, Σs)
+
+Convert a Pathwise ensemble `ens` of shape `N × d × T` (samples × dimension ×
+time-step) into per-step posterior moments consumable by [`coverage`](@ref):
+`μs[k]` is the length-`d` sample mean and `Σs[k]` the `d×d` sample covariance at
+time-step `k`. Samples are the rows of each `ens[:, :, k]` slice.
+"""
+function pathwise_moments(ens::AbstractArray{<:Real, 3})
+    N, d, T = size(ens)
+    N ≥ 2 || throw(ArgumentError("pathwise_moments needs ≥2 samples, got N=$N"))
+    μs = [vec(mean(@view(ens[:, :, k]); dims = 1)) for k in 1:T]
+    Σs = [Matrix(cov(@view(ens[:, :, k]))) for k in 1:T]   # cov over rows → d×d
+    return μs, Σs
+end

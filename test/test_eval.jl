@@ -182,3 +182,24 @@ end
     ridge_slice(loss, v; idx = (1, 2), grid = (range(-1, 1; length = 5), range(-1, 1; length = 5)))
     @test v == v_copy
 end
+
+# ---------------------------------------------------------------------------
+# pathwise_moments — ensemble → per-step (μ, Σ)
+# ---------------------------------------------------------------------------
+
+@testset "pathwise_moments" begin
+    # Deterministic ensemble: 3 samples, d=2, T=2.
+    ens = zeros(3, 2, 2)
+    ens[:, :, 1] = [1.0 0.0; 3.0 0.0; 5.0 0.0]   # step1: x-col mean 3, var 4; y-col 0
+    ens[:, :, 2] = [0.0 2.0; 0.0 4.0; 0.0 6.0]   # step2: x 0; y mean 4, var 4
+    μs, Σs = pathwise_moments(ens)
+    @test length(μs) == 2 && length(Σs) == 2
+    @test μs[1] ≈ [3.0, 0.0]
+    @test μs[2] ≈ [0.0, 4.0]
+    @test Σs[1][1, 1] ≈ 4.0           # sample var of [1,3,5] = 4
+    @test size(Σs[1]) == (2, 2)
+    @test issymmetric(Σs[2])
+    # round-trips into coverage without error
+    truth = [μs[k] for k in 1:2]
+    @test coverage(truth, μs, Σs .+ Ref(0.1I); level = 0.9) ≥ 0.0
+end

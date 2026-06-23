@@ -141,8 +141,7 @@ ens = propagate(gps, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
 # Per-step empirical mean + covariance from the ensemble, then reuse the same
 # Mahalanobis-χ² `coverage` as PULL (apples-to-apples at 90% nominal).
 nsteps = length(ts_test)
-μs_path = [vec(mean(ens[:, :, k]; dims = 1)) for k in 1:nsteps]        # d-vector per step
-Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]                     # d×d per step (samples in rows)
+μs_path, Σs_path = pathwise_moments(ens)
 cov90_path = coverage(truth_vecs, μs_path, Σs_path; level = 0.9)
 
 @info "Held-out-IC Pathwise coverage at 90% nominal (ensemble; nominal-or-conservative)" cov90_path

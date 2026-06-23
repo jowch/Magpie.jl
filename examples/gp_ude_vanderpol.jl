@@ -158,8 +158,7 @@ ens = propagate(gps, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
 # Mahalanobis-χ² `coverage` as PULL (apples-to-apples at 90% nominal).
 # Skip the first step (all samples start at the same u0_test; zero variance).
 nsteps = length(ts_test)
-μs_path = [vec(mean(ens[:, :, k]; dims = 1)) for k in 1:nsteps]
-Σs_path = [cov(ens[:, :, k]) for k in 1:nsteps]
+μs_path, Σs_path = pathwise_moments(ens)
 
 # Coverage over steps 2:end only (step 1 is deterministic: all samples = u0_test).
 cov90_path = coverage(truth_vecs[2:end], μs_path[2:end], Σs_path[2:end]; level = 0.9)
