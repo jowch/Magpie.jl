@@ -17,5 +17,6 @@ using Test
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_svgp_mo.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_noise.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_pull.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_calibration.jl")
     # Benchmarks live in bench/ and are run by hand (not CI gates) — see bench/timing_exact_vs_svgp.jl.
 end

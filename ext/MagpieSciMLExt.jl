@@ -41,12 +41,14 @@ per `v`, outside any trajectory/segment loop.
 # logσ_obs (the Gaussian-NLL observation-noise log-stds) lives at indices 3:(2+outputdim(field)) of `v`
 # and is consumed ONLY by the data term — it is NOT in the solve `pf`. field_loss extracts it from `v`
 # and threads it into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via kw...).
-function field_loss(field, shooting, data; kw...)
+function field_loss(field, shooting, data; trace::Bool = true, kw...)
+    dout = Magpie.outputdim(field)
     return function (v)
         pf, rhs!, uvar = field_rhs(field, v)
+        uv = trace ? uvar : (_ -> zeros(dout))
         return shooting_data_term(
             field, shooting, (pf, rhs!), data;
-            logσ_obs = v[3:(2 + Magpie.outputdim(field))], uvar = uvar, kw...
+            logσ_obs = v[3:(2 + dout)], uvar = uv, kw...
         ) + Magpie.regularizer(field, v; kw...)
     end
 end
