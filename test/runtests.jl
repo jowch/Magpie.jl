@@ -8,4 +8,5 @@ using Test
     include("test_exemplar_A2.jl")
     include("test_exemplar_critpoints.jl")
     include("test_saddle.jl")
+    include("test_multioutput.jl")
 end

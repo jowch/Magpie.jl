@@ -44,10 +44,10 @@ Field names follow Rasmussen & Williams (Algorithm 2.1).
 Build an unconditioned `ExactGP`; condition it on data with [`update`](@ref).
 """
 struct ExactGP{Tp, Tx, Tδ, TC, Tα} <: AbstractGPModel
-    prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64
+    prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64; d::Int
 end
-ExactGP(kernel::Kernel; noise::Real = 1.0e-6, mean = AbstractGPs.ZeroMean()) =
-    ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise))
+ExactGP(kernel::Kernel; noise::Real = 1.0e-6, mean = AbstractGPs.ZeroMean(), d::Int = 1) =
+    ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise), d)
 
 # True once the GP has been conditioned on data (the Cholesky factor exists).
 _hasdata(g::ExactGP) = g.C !== nothing
@@ -111,6 +111,15 @@ function _validate_obs(X, y)
     return nothing
 end
 
+# Observation values → the conditioning RHS. d=1 keeps a Vector (the single-output path is
+# unchanged); d>1 stacks the per-point length-d observations into an n×d Matrix.
+function _obsmatrix(y, d::Int)
+    d == 1 && return collect(float.(y))
+    all(yi -> length(yi) == d, y) ||
+        throw(ArgumentError("each observation must have length d=$d; got lengths $(unique(length.(y)))"))
+    return permutedims(reduce(hcat, [collect(float.(yi)) for yi in y]))    # n×d
+end
+
 """
     update(g::ExactGP, X, y) -> ExactGP
 
@@ -124,10 +133,10 @@ function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
     _validate_obs(X, y)
     _hasdata(g) && return _update_incremental(g, X, y)
     xnew = collect(X)
-    δnew = y .- AbstractGPs.mean(g.prior, xnew)
+    δnew = _obsmatrix(y, g.d) .- AbstractGPs.mean(g.prior, xnew)     # vector (d=1) or n×d matrix
     K = AbstractGPs.cov(g.prior, xnew) + g.noise * I
     C = _chol(K)
-    return ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
+    return ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise, g.d)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
 
@@ -176,6 +185,6 @@ function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
     C22 = Matrix(Symmetric(AbstractGPs.cov(g.prior, xnew) + g.noise * I))
     Cext = update_chol(g.C, C12, C22)
     xall = vcat(g.x, xnew)
-    δall = vcat(g.δ, y .- AbstractGPs.mean(g.prior, xnew))
-    return ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise)
+    δall = vcat(g.δ, _obsmatrix(y, g.d) .- AbstractGPs.mean(g.prior, xnew))   # vcat rows; matrix-safe
+    return ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise, g.d)
 end

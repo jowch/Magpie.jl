@@ -35,8 +35,8 @@ factor of ``K + \sigma^2 I``. Returns `0.0` for an unconditioned GP.
 """
 function nlml(g::ExactGP)
     _hasdata(g) || return 0.0
-    n = length(g.δ)
-    return 0.5 * dot(g.δ, g.α) + sum(log, diag(g.C.U)) + 0.5n * log(2π)
+    n = size(g.δ, 1)                                   # rows = #points (length for a Vector)
+    return 0.5 * dot(g.δ, g.α) + g.d * (sum(log, diag(g.C.U)) + 0.5n * log(2π))
 end
 
 """
