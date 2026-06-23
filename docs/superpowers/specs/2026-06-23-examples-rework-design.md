@@ -68,3 +68,16 @@ Each example is a **Literate.jl source** (`examples/` or `docs/literate/`) that 
 - Whether the custom r²-Taylor kernel stays tutorial-local (recommended — it's an extensibility demonstration) or is promoted to a small `src/` helper later.
 - Baseline depth for MB (random only, vs adding a classical-dimer call-count contrast).
 - The level-set / classification realistic scenarios' exact closed-form ground truth (kept analytic, no external data).
+
+---
+
+## Scope correction (as-built, 2026-06-23)
+
+The worked examples **already exist** as developed Literate tutorials in `examples/` (rendered via `docs/make.jl`, run as CI anti-rot tests, **Plots.jl** backend — already wired). So this is **rework of four existing files**, not creation, and the backend/tooling decisions are already made (use Plots; no new infra). Per-file plan:
+
+- **`examples/muller_brown.jl`** (339 lines) — major surgery. Currently does *both* global critical-point enumeration *and* transition-state search between *two* known minima (`transition_state(mbt, MB_min, MC_min)`), with an "honest detour" active-vs-random enumeration benchmark and a convergence-comparison plot. **Cut** the global-enumeration half, the honest-detour benchmark, and the two-minima convergence plot (~150 lines). **Reframe** to a *single* known minimum → escape saddle via a single-ended min-mode/GP-dimer loop composed **inline**. **Swap** the fixed isotropic SE (its z-score/clip preprocessing currently substitutes for per-axis scaling) for the **custom anisotropic r²-Taylor Matérn** (spike-verified: finite + exact ARD `grad_predict`). Keep the potential, truth constants, preprocessing, and the saddle-walk animation pattern.
+- **`examples/levelset_straddle.jl`** (135 lines) — light. Change the unit circle to an **ellipse** so an **ARD SE** kernel (`SqExponentialKernel() ∘ ARDTransform([ℓ1,ℓ2])`, fittable via `fit`) is genuinely motivated; +1 realistic-framing sentence. Keep the loop, figures, and `#src` assertions (retune thresholds).
+- **`examples/bald_classification.jl`** (187 lines) — minimal. **Keep isotropic SE** — explored and confirmed ARD is not sensible here (`fit` is a no-op for `LaplaceGP` so ARD can't be recovered; hand-set ARD gave 0.559 vs isotropic 0.561 on an anisotropic boundary, within noise). Trim the over-packed opening (three cost examples → one) and the long Figure-2 comment.
+- **`examples/volcano_terrain.jl`** (150 lines) — keep + light ARD modernization. Real volcano DEM Morse critical points (kriging = GP); the only example that calls `fit`. Swap `SqExponentialKernel() ∘ ScaleTransform(6.0)` → ARD SE (still fitted by `fit`). After MB drops its enumeration half, this becomes the sole "recover all Morse critical points" example — a clean complement. Keep narrative and data.
+
+**Example count: four** (the spec's original three + `volcano_terrain.jl`). The `test/test_exemplar_*.jl` files are the *regression tests*; the `examples/*.jl` are the rendered tutorials — reconcile the exemplar tests with the reworked tutorials so both stay green.
