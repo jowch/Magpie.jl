@@ -5,7 +5,7 @@
 # Task 4.1: SVGP = exact GP in the M=N limit (rtol=1e-6 on mean; ~machine eps achieved).
 
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Statistics, Random, Test
-using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, L_ZZ_factor, SparseGP, predmean,
+using Magpie: svgp_kl, unpack_LS, nLS, svgp_moments, svgp_var, L_ZZ_factor, SparseGP, predmean,
     _kernel, ExactGP
 
 @testset "SVGP math: KL ≥ 0, μ=0 S=I ⇒ KL=0, unpack_LS diagonal = exp(raw)" begin
@@ -267,4 +267,18 @@ end
 
     # Variance: ε_S² contribution is < 1e-28; exact agreement expected
     @test v_svgp ≈ v_exact rtol = 1.0e-6
+end
+
+@testset "svgp_var is AD-safe svgp_moments variance" begin
+    Z = [[x] for x in range(-1, 1; length = 4)]
+    k = Magpie._kernel(0.0, 0.0)
+    prior = AbstractGPs.GP(AbstractGPs.ZeroMean(), k)
+    L_ZZ = Magpie.L_ZZ_factor(prior, Z; jitter = 1.0e-4)
+    L_S = Magpie.unpack_LS([0.1, 0.0, 0.2, 0.0, 0.0, 0.3, -0.1, 0.0, 0.05, 0.15][1:Magpie.nLS(4)], 4)
+    u = [0.3]
+    α = L_ZZ' \ zeros(4)
+    μ_ref, σ2_ref = Magpie.svgp_moments(prior, Z, L_ZZ, α, L_S, u)
+    σ2 = Magpie.svgp_var(prior, Z, L_ZZ, L_S, u)
+    @test σ2 ≈ σ2_ref rtol = 1.0e-10           # identical where the clamp is inactive (σ²>0)
+    @test σ2 > 0
 end

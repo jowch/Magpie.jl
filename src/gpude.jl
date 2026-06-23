@@ -371,6 +371,22 @@ function svgp_moments(prior, Z, L_ZZ, α, L_S, u)
     return μ_star, σ2
 end
 
+"""
+    svgp_var(prior, Z, L_ZZ, L_S, u) -> Real
+
+Whitened SVGP predictive variance at a single point `u`, WITHOUT the `max(0,·)` clamp in
+[`svgp_moments`](@ref). This is the through-solver-AD-safe form used by the ELBO trace
+correction (the clamp's subgradient kink would kill the `L_S` gradient where it matters).
+The relative jitter keeps `K_ZZ` conditioned so the unclamped value stays positive in practice.
+
+    A = L_ZZ \\ k(Z,u);   σ² = k(u,u) − A'A + ‖L_S'A‖²
+"""
+function svgp_var(prior, Z, L_ZZ, L_S, u)
+    kZu = vec(AbstractGPs.cov(prior, Z, [u]))
+    A = L_ZZ \ kZu
+    return only(AbstractGPs.var(prior, [u])) - dot(A, A) + sum(abs2, L_S' * A)
+end
+
 # ---------------------------------------------------------------------------
 # SparseGP — full AbstractGPModel via svgp_moments.
 # ---------------------------------------------------------------------------

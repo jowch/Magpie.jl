@@ -41,3 +41,21 @@ using Magpie: SVGPField, nLS
     @test norm(g_fd[Zb]) > 1.0e-2
     @test norm(g_fd[μb]) > 1.0e-2
 end
+
+@testset "trace-corrected SVGP ELBO: gradient sound + L_S coupled" begin
+    rng = MersenneTwister(7)
+    Z = [[x] for x in range(-1, 1; length = 3)]
+    field = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 2)
+    ts = collect(range(0.0, 2.0; length = 12))
+    Xtrue = hcat([[cos(t), sin(t)] for t in ts]...)
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    loss = ext.svgp_elbo_loss(field, [(ts, Xtrue)]; tspan = (0.0, 2.0))
+    v = copy(field.v0)
+    g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v)
+    g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v)[1]
+    relerr = norm(g_mc .- g_fd) / (norm(g_fd) + 1.0e-8)
+    @test relerr < 1.0e-3
+    # An L_S diagonal slot now receives gradient from the data (was ~0 from KL-only at S=I).
+    ls_idx = 2 + field.dout + field.D * field.M + field.M * field.dout + 1   # first L_S raw entry
+    @test abs(g_mc[ls_idx]) > 1.0e-6
+end

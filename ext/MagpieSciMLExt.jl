@@ -43,10 +43,10 @@ per `v`, outside any trajectory/segment loop.
 # and threads it into shooting_data_term; callers may also pass logσ_obs explicitly (it wins via kw...).
 function field_loss(field, shooting, data; kw...)
     return function (v)
-        pf, rhs! = field_rhs(field, v)
+        pf, rhs!, uvar = field_rhs(field, v)
         return shooting_data_term(
             field, shooting, (pf, rhs!), data;
-            logσ_obs = v[3:(2 + Magpie.outputdim(field))], kw...
+            logσ_obs = v[3:(2 + Magpie.outputdim(field))], uvar = uvar, kw...
         ) + Magpie.regularizer(field, v; kw...)
     end
 end
@@ -62,7 +62,7 @@ wraps the returned closure so it does `du .= cf.known(u,t)` FIRST, then adds the
 The `known` closure is called every RHS evaluation but carries no trained params.
 """
 function field_rhs(cf::Magpie.CompositeField, v)
-    pf, _ = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf (inner closure unused — CompositeField rebuilds via gpfield)
+    pf, _, uvar = field_rhs(cf.gp, v)   # inner GP: solves α, builds pf + uvar (inner rhs! unused — CompositeField rebuilds via gpfield)
     known = cf.known                         # do NOT closure-capture α or pf — only the fixed known fn
     # `cf.known` is the authoritative known-physics source. The shared `f!` wrapper (in
     # shooting_data_term) splats a `known_physics=` kwarg into every field's rhs!, so we
@@ -72,7 +72,7 @@ function field_rhs(cf::Magpie.CompositeField, v)
         du .+= gpfield(cf.gp, u, _pf)       # GP residual (α threaded in _pf, R1)
         return nothing
     end
-    return (pf, rhs!)
+    return (pf, rhs!, uvar)
 end
 
 """
@@ -88,7 +88,8 @@ function field_rhs(field::ExactGPField, v)
     α = solve_alpha(field, h.logℓ, h.logσ, field.lognoise, Magpie.wmat(L, v))  # lognoise FIXED, in-loss
     pf = vcat(h.logℓ, h.logσ, vec(α))                                          # α threaded into pf (R1)
     rhs!(du, u, _pf, t; known_physics) = (du .= known_physics(u, t); du .+= gpfield(field, u, _pf); nothing)
-    return (pf, rhs!)
+    uvar = _ -> zeros(field.d)                       # exact field has no variational-variance term
+    return (pf, rhs!, uvar)
 end
 
 """
@@ -110,6 +111,9 @@ function field_rhs(field::SVGPField, v)
     L_ZZ = _chol(kernelmatrix(k, Zvec) + jit * I).L   # ONE shared Cholesky (shared Z)
     α = L_ZZ' \ μ                                  # M×dout
     pf = vcat(logℓ, logσ, vec(Z), vec(α))          # Z trainable + α threaded into pf (R1)
+    prior = AbstractGPs.GP(field.prior.mean, k)
+    Ls = [Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), M) for i in 1:dout]
+    uvar = u -> [Magpie.svgp_var(prior, Zvec, L_ZZ, Ls[i], u) for i in 1:dout]
     function rhs!(du, u, _pf, t; known_physics)
         du .= known_physics(u, t)
         kk = Magpie._kernel(_pf[1], _pf[2])
@@ -120,7 +124,7 @@ function field_rhs(field::SVGPField, v)
         end
         return nothing
     end
-    return (pf, rhs!)
+    return (pf, rhs!, uvar)
 end
 
 # --- shooting_data_term: the ONLY place segmentation lives; field-agnostic. ---
@@ -250,9 +254,10 @@ function build_loss(
     regkw = merge((λσ = 0.0,), values(kw))                        # old MS reg: logℓ-only (λσ=0 unless overridden)
     return function loss(v)
         s0 = reshape(v[(off + 1):(off + field.d * S)], field.d, S)
+        pf, rhs!, uvar = field_rhs(field, v)
         return shooting_data_term(
-            field, ms, field_rhs(field, v), [(collect(t_data), u_data)];
-            s0 = s0, logσ_obs = v[3:(2 + field.d)], kw...
+            field, ms, (pf, rhs!), [(collect(t_data), u_data)];
+            s0 = s0, logσ_obs = v[3:(2 + field.d)], uvar = uvar, kw...
         ) +
             Magpie.regularizer(field, v; regkw...)
     end
