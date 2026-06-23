@@ -19,12 +19,12 @@ Math: with the posterior mean `μ(x)=m(x)+k(x,X)α`,
 # to bridge KernelFunctions + AD, not hand-code derivatives per kernel. The acquisition
 # uses `hessian=false`; the AD Hessian fires only at the handful of extracted candidates.
 """
-function grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool=true)
+function grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool = true)
     d = length(x); k = g.prior.kernel
     pv = _prior_grad_var(k, x)                                       # prior Var[∂ᵢf], length d
     _hasdata(g) || return (zeros(d), pv, hessian ? zeros(d, d) : nothing)
     μ∇ = ForwardDiff.gradient(z -> predmean(g, z), x)
-    G  = reduce(hcat, (ForwardDiff.gradient(z -> k(z, Xj), x) for Xj in g.x))  # d×n: ∂ᵢk(x,Xⱼ)
+    G = reduce(hcat, (ForwardDiff.gradient(z -> k(z, Xj), x) for Xj in g.x))  # d×n: ∂ᵢk(x,Xⱼ)
     Σdiag = max.(pv .- diag_Xt_invA_X(g.C, permutedims(G)), 0.0)     # permutedims → n×d for helper
     H = hessian ? ForwardDiff.hessian(z -> predmean(g, z), x) : nothing
     return (μ∇, Σdiag, H)
@@ -41,7 +41,7 @@ there — fall back to the analytic per-family constant via [`_prior_grad_var_co
 """
 function _prior_grad_var(k, x)
     pv = -diag(ForwardDiff.hessian(z -> k(z, x), x))
-    all(isfinite, pv) ? pv : fill(_prior_grad_var_const(k), length(x))
+    return all(isfinite, pv) ? pv : fill(_prior_grad_var_const(k), length(x))
 end
 
 # Analytic prior gradient variance for norm-singular kernels where AD NaNs at r=0.
@@ -50,6 +50,8 @@ function _prior_grad_var_const(k)
     bk = _basekernel(k); ℓ = _lengthscale(k); σ² = _outputscale(k)
     bk isa Matern52Kernel && return 5σ² / (3 * ℓ^2)
     bk isa Matern32Kernel && return σ² / ℓ^2
-    error("grad_predict: prior gradient variance is NaN under AD for $(typeof(bk)) " *
-          "(norm-singular at r=0) and no analytic constant is registered; add one to _prior_grad_var_const")
+    error(
+        "grad_predict: prior gradient variance is NaN under AD for $(typeof(bk)) " *
+            "(norm-singular at r=0) and no analytic constant is registered; add one to _prior_grad_var_const"
+    )
 end

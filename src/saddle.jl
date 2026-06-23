@@ -38,7 +38,7 @@ function newton_polish(g::ExactGP, x0; box::Box, iters::Int = 20, λ::Real = 1.0
         μ∇, _, H = grad_predict(g, x)
     end
     res = norm(μ∇)
-    return (; x, μ∇, H, residual = res, converged = res < tol)
+    return (; x, μ∇, H, residual = res, converged = res < tol && all(box.lb .< x) && all(x .< box.ub))
 end
 
 @doc raw"""
@@ -70,7 +70,7 @@ function saddle_walk(g::ExactGP, x0; box::Box, iters::Int = 60, η::Real = 0.05,
     end
     μ∇, _, H = grad_predict(g, x)
     res = norm(μ∇)
-    return (; x, μ∇, H, residual = res, converged = res < tol)
+    return (; x, μ∇, H, residual = res, converged = res < tol && all(box.lb .< x) && all(x .< box.ub))
 end
 
 # Seed set for transition_state: the two minima plus `nseed` points jittered perpendicular to
@@ -111,6 +111,8 @@ function transition_state(
         rng = Random.default_rng()
     )
     m1 = collect(float.(m1)); m2 = collect(float.(m2))
+    length(m1) == length(box.lb) ||
+        throw(ArgumentError("seed dimension $(length(m1)) ≠ box dimension $(length(box.lb))"))
     X = _ts_seed(m1, m2, box; nseed = nseed, rng = rng)
     buildgp(pts) = update(ExactGP(kernel; noise = noise), pts, [f(p) for p in pts])
     g = buildgp(X)

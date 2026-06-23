@@ -2,7 +2,7 @@ using Magpie, KernelFunctions, Test
 using Magpie: ExactGP, LaplaceGP, update, Box, grid_points
 
 @testset "observation validation" begin
-    g = ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1e-4)
+    g = ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4)
     @test_throws ArgumentError update(g, [[0.0], [1.0]], [0.0])          # count mismatch
     @test_throws ArgumentError update(g, Vector{Float64}[], Float64[])    # empty
     @test_throws ArgumentError update(g, [[0.0], [NaN]], [0.0, 1.0])      # non-finite input

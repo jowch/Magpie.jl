@@ -46,6 +46,14 @@ end
     @test div < 0.5            # and no single-cell collapse
 end
 
+@testset "acquire throws on input/domain dimension mismatch" begin
+    al = ActiveLearner(ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4), Straddle(h = 0.0))
+    f1(x) = x[1]^2 - 1
+    observe!(al, [-0.5], f1([-0.5]))
+    observe!(al, [0.5], f1([0.5]))
+    @test_throws ArgumentError acquire(al; over = Box([-1.0, -1.0], [1.0, 1.0]))
+end
+
 @testset "ActiveLearner has typed storage and is seedable" begin
     mk() = ActiveLearner(
         ExactGP(with_lengthscale(SqExponentialKernel(), 0.5); noise = 1.0e-4),

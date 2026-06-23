@@ -75,7 +75,7 @@ end
 @testset "classify is scale-invariant" begin
     Hmin = [1.0 0.0; 0.0 2.0]
     @test classify(Hmin) == :min
-    @test classify(1.0e-3 .* Hmin) == :min      # absolute-threshold version returned :unclassified here
+    @test classify(1.0e-3 .* Hmin) == :min      # scale-consistency check; genuine discriminator vs old absolute floor is the 1e-4 case below
     @test classify(1.0e3 .* Hmin) == :min
     Hsaddle = [-1.0 0.0; 0.0 2.0]
     @test classify(1.0e-3 .* Hsaddle) == :saddle
@@ -94,6 +94,29 @@ end
     @test r.converged == false
     @test r.residual > 1.0e-2
     @test r.x == r[1] && r.H == r[3]      # positional compatibility preserved
+end
+
+@testset "newton_polish converged=true at interior minimum" begin
+    # Quadratic bowl centred at (0, 0), well inside a [-2,2]^2 box.
+    # Dense sampling drives GP mean close to the bowl; Newton polish from a nearby
+    # start should reach the minimum with small residual and report converged=true.
+    bowl(p) = p[1]^2 + p[2]^2
+    bowl_box = Box([-2.0, -2.0], [2.0, 2.0])
+    bowl_kernel = with_lengthscale(SqExponentialKernel(), 0.5)
+    Random.seed!(99)
+    X = [bowl_box.lb .+ (bowl_box.ub .- bowl_box.lb) .* rand(2) for _ in 1:40]
+    g = Magpie.update(ExactGP(bowl_kernel; noise = 1.0e-6), X, bowl.(X))
+    r = newton_polish(g, [0.1, 0.1]; box = bowl_box, iters = 50, tol = 1.0e-6)
+    @test r.converged == true
+    @test all(bowl_box.lb .< r.x) && all(r.x .< bowl_box.ub)   # interior
+    @test r.residual < 1.0e-6
+    @test r.x == r[1] && r.H == r[3]   # positional compatibility preserved
+end
+
+@testset "transition_state throws on seed/box dimension mismatch" begin
+    @test_throws ArgumentError transition_state(
+        mbt, [0.0], [1.0]; kernel = mbkernel(), box = MB_BOX, budget = 8
+    )
 end
 
 @testset "transition_state is reproducible under a seeded rng" begin

@@ -28,7 +28,7 @@ using Plots; gr()
 # separated by two saddles. We work on the conventional window and clip the steep exponential
 # walls for display (the true `f` reaches ~10³ at the corners).
 
-const A  = (-200.0, -100.0, -170.0, 15.0)
+const A = (-200.0, -100.0, -170.0, 15.0)
 const aa = (-1.0, -1.0, -6.5, 0.7);  const bb = (0.0, 0.0, 11.0, 0.6)
 const cc = (-10.0, -10.0, -6.5, 0.7)
 const x0 = (1.0, 0.0, -0.5, -1.0);   const y0 = (0.0, 0.5, 1.5, 1.0)
@@ -37,9 +37,9 @@ function mullerbrown(p)
     x, y = p[1], p[2]; s = 0.0
     for k in 1:4
         dx = x - x0[k]; dy = y - y0[k]
-        s += A[k] * exp(aa[k]*dx^2 + bb[k]*dx*dy + cc[k]*dy^2)
+        s += A[k] * exp(aa[k] * dx^2 + bb[k] * dx * dy + cc[k] * dy^2)
     end
-    s
+    return s
 end
 
 box = Box([-1.5, -0.5], [1.0, 2.0])
@@ -49,28 +49,34 @@ box = Box([-1.5, -0.5], [1.0, 2.0])
 # the transition state on it.
 
 const MA_min = [-0.558, 1.442]    # high-left minimum
-const MB_min = [-0.050, 0.467]    # shallow central minimum
-const MC_min = [ 0.623, 0.028]    # deep right minimum
+const MB_min = [-0.05, 0.467]    # shallow central minimum
+const MC_min = [0.623, 0.028]    # deep right minimum
 const S1 = [-0.822, 0.624]        # saddle between MA and MB
-const S2 = [ 0.212, 0.293]        # saddle between MB and MC  (our target TS)
+const S2 = [0.212, 0.293]        # saddle between MB and MC  (our target TS)
 
-truth      = [MA_min, MB_min, MC_min, S1, S2]
+truth = [MA_min, MB_min, MC_min, S1, S2]
 true_kinds = [:min, :min, :min, :saddle, :saddle]
 
 xl = range(-1.5, 1.0; length = 100); yl = range(-0.5, 2.0; length = 100)
 Vclip(p) = min(mullerbrown(p), 150.0)                 ## clip walls for a readable contour
 Zf = [Vclip([xi, yj]) for yj in yl, xi in xl]
 
-plt_contour = contourf(xl, yl, Zf; levels = 20, c = :viridis, colorbar_title = "V (clipped)",
+plt_contour = contourf(
+    xl, yl, Zf; levels = 20, c = :viridis, colorbar_title = "V (clipped)",
     aspect_ratio = :equal, xlims = (-1.5, 1.0), ylims = (-0.5, 2.0),
-    xlabel = "x", ylabel = "y", title = "Müller–Brown potential")
+    xlabel = "x", ylabel = "y", title = "Müller–Brown potential"
+)
 for (kind, mk, col, lab) in ((:min, :circle, :white, "minima"), (:saddle, :diamond, :orange, "saddles (TS)"))
     idx = findall(==(kind), true_kinds)
-    scatter!(plt_contour, [truth[i][1] for i in idx], [truth[i][2] for i in idx];
-        m = mk, ms = 8, mc = col, msw = 1.2, label = lab)
+    scatter!(
+        plt_contour, [truth[i][1] for i in idx], [truth[i][2] for i in idx];
+        m = mk, ms = 8, mc = col, msw = 1.2, label = lab
+    )
 end
-plt_surface = surface(xl, yl, Zf; c = :viridis, colorbar = false, camera = (35, 45),
-    xlabel = "x", ylabel = "y", zlabel = "V", title = "the basins and barriers")
+plt_surface = surface(
+    xl, yl, Zf; c = :viridis, colorbar = false, camera = (35, 45),
+    xlabel = "x", ylabel = "y", zlabel = "V", title = "the basins and barriers"
+)
 plot(plt_contour, plt_surface; layout = (1, 2), size = (960, 410))
 
 # The minima are metastable chemical states; the saddles are the transition states that gate the
@@ -96,7 +102,7 @@ let g = grid_points(box; per_axis = 50), v = min.(mullerbrown.(g), CEIL)
 end
 mbt(p) = (min(mullerbrown(p), CEIL) - _μ) / _σ        ## clipped, z-scored — what we condition on
 
-const ℓ0 = 0.3; const NOISE = 1e-3
+const ℓ0 = 0.3; const NOISE = 1.0e-3
 mbkernel() = with_lengthscale(SqExponentialKernel(), ℓ0)
 buildgp(pts) = update(ExactGP(mbkernel(); noise = NOISE), pts, mbt.(pts))
 
@@ -114,37 +120,43 @@ buildgp(pts) = update(ExactGP(mbkernel(); noise = NOISE), pts, mbt.(pts))
 # posterior **gradient variance** `Σ∇` — genuine critical points sit where the field is pinned
 # down by data (low `Σ∇`), spurious ones where it is not.
 
-function critical_points(g, box; per_axis = 40, ε = 1e-3, restol = 1e-2, maxvar = 0.2)
-    pol  = [newton_polish(g, x; box = box, iters = 20) for x in grid_points(box; per_axis = per_axis)]
+function critical_points(g, box; per_axis = 40, ε = 1.0e-3, restol = 1.0e-2, maxvar = 0.2)
+    pol = [newton_polish(g, x; box = box, iters = 20) for x in grid_points(box; per_axis = per_axis)]
     conv = filter(p -> norm(p[2]) < restol, pol)
     uniq = unique(p -> round.(p[1]; digits = 1), conv)
-    cps  = map(uniq) do (x, _, H)
+    cps = map(uniq) do (x, _, H)
         (point = x, kind = classify(H; ε = ε), gvar = maximum(grad_predict(g, x)[2]))
     end
-    filter(c -> c.gvar ≤ maxvar, cps)             ## drop spurious zeros in under-sampled regions
+    return filter(c -> c.gvar ≤ maxvar, cps)             ## drop spurious zeros in under-sampled regions
 end
 
 # Condition on a **space-filling sample** (an 11×11 grid; coverage, not active) and extract. All
 # three minima and both saddles are recovered with the right Morse type.
 
 cov_pts = grid_points(box; per_axis = 11)
-gcov    = buildgp(cov_pts)
-cps     = critical_points(gcov, box)
+gcov = buildgp(cov_pts)
+cps = critical_points(gcov, box)
 
 matcherr(p) = minimum(norm(c.point .- p) for c in cps; init = Inf)
-@info "extraction from coverage data" n_samples=length(cov_pts) n_cps=length(cps) max_err=maximum(matcherr, truth)
+@info "extraction from coverage data" n_samples = length(cov_pts) n_cps = length(cps) max_err = maximum(matcherr, truth)
 
 xg = range(-1.5, 1.0; length = 90); yg = range(-0.5, 2.0; length = 90)
 Zgn = [norm(grad_predict(gcov, [xi, yj])[1]) for yj in yg, xi in xg]
-plt_recovered = heatmap(xg, yg, Zgn; c = :magma, colorbar_title = "‖μ∇‖",
+plt_recovered = heatmap(
+    xg, yg, Zgn; c = :magma, colorbar_title = "‖μ∇‖",
     aspect_ratio = :equal, xlims = (-1.5, 1.0), ylims = (-0.5, 2.0),
-    xlabel = "x", ylabel = "y", title = "Recovered & classified critical points")
-scatter!(plt_recovered, [p[1] for p in cov_pts], [p[2] for p in cov_pts];
-    ms = 2, mc = :white, msw = 0, alpha = 0.4, label = "samples")
+    xlabel = "x", ylabel = "y", title = "Recovered & classified critical points"
+)
+scatter!(
+    plt_recovered, [p[1] for p in cov_pts], [p[2] for p in cov_pts];
+    ms = 2, mc = :white, msw = 0, alpha = 0.4, label = "samples"
+)
 for (kind, mk, col, lab) in ((:min, :circle, :cyan, "min"), (:saddle, :diamond, :yellow, "saddle"))
     P = [c.point for c in cps if c.kind == kind]
-    isempty(P) || scatter!(plt_recovered, [p[1] for p in P], [p[2] for p in P];
-        m = mk, ms = 8, mc = col, msw = 1, label = lab)
+    isempty(P) || scatter!(
+        plt_recovered, [p[1] for p in P], [p[2] for p in P];
+        m = mk, ms = 8, mc = col, msw = 1, label = lab
+    )
 end
 plt_recovered
 
@@ -161,15 +173,15 @@ plt_recovered
 
 function active_enum(; seed, T, ninit = 6, c = 0.5)
     Random.seed!(seed)
-    Xs = [box.lb .+ (box.ub .- box.lb).*rand(2) for _ in 1:ninit]
-    g  = buildgp(Xs); acq0 = GradStraddle(β = 1.96); acq = LocalPenalization(acq0, Xs; c = c)
+    Xs = [box.lb .+ (box.ub .- box.lb) .* rand(2) for _ in 1:ninit]
+    g = buildgp(Xs); acq0 = GradStraddle(β = 1.96); acq = LocalPenalization(acq0, Xs; c = c)
     for _ in 1:(T - ninit)
         x = acquire(g, acq; over = box); g = update(g, [x], [mbt(x)]); push!(Xs, x)
         acq = LocalPenalization(acq0, Xs; c = c)
     end
-    g
+    return g
 end
-random_enum(; seed, T) = (Random.seed!(seed); buildgp([box.lb .+ (box.ub .- box.lb).*rand(2) for _ in 1:T]))
+random_enum(; seed, T) = (Random.seed!(seed); buildgp([box.lb .+ (box.ub .- box.lb) .* rand(2) for _ in 1:T]))
 recov(g; atol = 0.1) = count(zip(truth, true_kinds)) do (p, k)
     any(c -> c.kind == k && norm(c.point .- p) < atol, critical_points(g, box; per_axis = 30))
 end
@@ -177,7 +189,7 @@ end
 enum_T = [20, 30, 40]
 act_enum = [mean(recov(active_enum(; seed = s, T = T)) for s in 1:4) for T in enum_T]
 rnd_enum = [mean(recov(random_enum(; seed = s, T = T)) for s in 1:4) for T in enum_T]
-@info "scarce enumeration (mean recovered of 5, 4 seeds)" T=enum_T active=act_enum random=rnd_enum
+@info "scarce enumeration (mean recovered of 5, 4 seeds)" T = enum_T active = act_enum random = rnd_enum
 
 # This is **extraction-limited**, not acquisition-limited. The Newton extractor needs spatial
 # *coverage* to represent all five basins; concentrating the budget toward the gradient-zeros
@@ -194,9 +206,11 @@ rnd_enum = [mean(recov(random_enum(; seed = s, T = T)) for s in 1:4) for T in en
 # is spent — concentrating every evaluation on the one saddle of interest.
 
 Random.seed!(1)
-res = transition_state(mbt, MB_min, MC_min; kernel = mbkernel(), noise = NOISE,
-                       box = box, budget = 12, nseed = 5, predictor = :minmode)
-@info "targeted TS search" predicted=round.(res.saddle; digits=4) truth_S2=S2 err=round(norm(res.saddle .- S2); digits=4) kind=res.kind
+res = transition_state(
+    mbt, MB_min, MC_min; kernel = mbkernel(), noise = NOISE,
+    box = box, budget = 12, nseed = 5, predictor = :minmode
+)
+@info "targeted TS search" predicted = round.(res.saddle; digits = 4) truth_S2 = S2 err = round(norm(res.saddle .- S2); digits = 4) kind = res.kind
 
 # ### Convergence: targeted vs random, averaged over seeds
 #
@@ -213,7 +227,7 @@ const SENT = 1.0                       ## "saddle not found" sentinel (caps rand
 ## every saddle of a GP mean, by raw multi-start Newton (no gradient-variance prune — the random
 ## baseline is credited with any saddle it stumbles on).
 raw_saddles(g) = let pol = [newton_polish(g, x; box = box, iters = 20) for x in grid_points(box; per_axis = 30)]
-    conv = filter(p -> norm(p[2]) < 1e-2, pol)
+    conv = filter(p -> norm(p[2]) < 1.0e-2, pol)
     uniq = unique(p -> round.(p[1]; digits = 1), conv)
     [x for (x, _, H) in uniq if classify(H) == :saddle]
 end
@@ -221,35 +235,41 @@ end
 ## targeted: ‖predicted − S2‖ at each evaluation count, as a Dict n → err (history covers n = 7…25)
 function targeted_hist(seed)
     Random.seed!(seed)
-    res = transition_state(mbt, MB_min, MC_min; kernel = mbkernel(), noise = NOISE,
-                           box = box, budget = 25, nseed = 5, predictor = :minmode)
-    Dict(n => norm(xs .- S2) for (n, xs, _) in res.history)
+    res = transition_state(
+        mbt, MB_min, MC_min; kernel = mbkernel(), noise = NOISE,
+        box = box, budget = 25, nseed = 5, predictor = :minmode
+    )
+    return Dict(n => norm(xs .- S2) for (n, xs, _) in res.history)
 end
 ## random: nearest-saddle error to S2 from T uniform samples, capped at the sentinel
 function random_err(seed, T)
     Random.seed!(seed)
-    X   = [box.lb .+ (box.ub .- box.lb).*rand(2) for _ in 1:T]
+    X = [box.lb .+ (box.ub .- box.lb) .* rand(2) for _ in 1:T]
     sad = raw_saddles(buildgp(X))
-    isempty(sad) ? SENT : min(SENT, minimum(norm(s .- S2) for s in sad))
+    return isempty(sad) ? SENT : min(SENT, minimum(norm(s .- S2) for s in sad))
 end
 
-th     = [targeted_hist(s) for s in 1:NTS]
-ns     = sort(collect(keys(th[1])))
+th = [targeted_hist(s) for s in 1:NTS]
+ns = sort(collect(keys(th[1])))
 t_mean = [mean(d[n] for d in th) for n in ns]
-t_std  = [std(d[n] for d in th)  for n in ns]
+t_std = [std(d[n] for d in th)  for n in ns]
 budgets = collect(7:2:25)
-r_mat  = [random_err(s, T) for s in 1:NTS, T in budgets]      ## NTS × #budgets
+r_mat = [random_err(s, T) for s in 1:NTS, T in budgets]      ## NTS × #budgets
 r_mean = vec(mean(r_mat; dims = 1)); r_std = vec(std(r_mat; dims = 1))
 
-@info "TS convergence (mean over $NTS seeds)" targeted_end=round(t_mean[end]; digits=3) random_mean=round(mean(r_mean); digits=3) random_notfound=count(==(SENT), r_mat)
+@info "TS convergence (mean over $NTS seeds)" targeted_end = round(t_mean[end]; digits = 3) random_mean = round(mean(r_mean); digits = 3) random_notfound = count(==(SENT), r_mat)
 
-plt_conv = plot(ns, t_mean; ribbon = t_std, fillalpha = 0.15, lw = 2, marker = :circle, mc = :steelblue,
+plt_conv = plot(
+    ns, t_mean; ribbon = t_std, fillalpha = 0.15, lw = 2, marker = :circle, mc = :steelblue,
     lc = :steelblue, label = "targeted (transition_state)",
     xlabel = "true f-evaluations", ylabel = "‖predicted − S2‖",
     title = "Transition-state localization (mean ± 1σ, $NTS seeds)",
-    yscale = :log10, ylims = (0.015, 1.5), legend = :left, size = (580, 400))
-plot!(plt_conv, budgets, r_mean; ribbon = r_std, fillalpha = 0.12, lw = 2, ls = :dash, marker = :diamond,
-    mc = :darkorange, lc = :darkorange, label = "random + nearest-saddle (cap $SENT)")
+    yscale = :log10, ylims = (0.015, 1.5), legend = :left, size = (580, 400)
+)
+plot!(
+    plt_conv, budgets, r_mean; ribbon = r_std, fillalpha = 0.12, lw = 2, ls = :dash, marker = :diamond,
+    mc = :darkorange, lc = :darkorange, label = "random + nearest-saddle (cap $SENT)"
+)
 hline!(plt_conv, [0.1]; lc = :gray, ls = :dot, lw = 1, label = "0.1 threshold")
 
 # ### Watching the saddle walk converge
@@ -260,11 +280,11 @@ hline!(plt_conv, [0.1]; lc = :gray, ls = :dot, lw = 1, label = "0.1 threshold")
 
 function ts_snapshots(; seed, budget)
     Random.seed!(seed)
-    d = MC_min .- MB_min; perp = [-d[2], d[1]]; perp ./= max(norm(perp), 1e-9)
+    d = MC_min .- MB_min; perp = [-d[2], d[1]]; perp ./= max(norm(perp), 1.0e-9)
     X = [copy(MB_min), copy(MC_min)]
     for i in 1:5
-        t = i/6; base = MB_min .+ t.*d
-        push!(X, clamp.(base .+ (0.12*(2rand() - 1)).*perp, box.lb, box.ub))
+        t = i / 6; base = MB_min .+ t .* d
+        push!(X, clamp.(base .+ (0.12 * (2rand() - 1)) .* perp, box.lb, box.ub))
     end
     snaps = NamedTuple[]
     g = buildgp(X)
@@ -275,16 +295,18 @@ function ts_snapshots(; seed, budget)
         length(X) ≥ budget && break
         push!(X, clamp.(xs, box.lb, box.ub)); g = buildgp(X)
     end
-    snaps
+    return snaps
 end
 
 snaps = ts_snapshots(; seed = 1, budget = 12)
 xc = range(-1.5, 1.0; length = 70); yc = range(-0.5, 2.0; length = 70)
 anim_ts = @animate for s in snaps
     Zm = [predmean(s.g, [xi, yj]) for yj in yc, xi in xc]
-    p = contourf(xc, yc, Zm; levels = 18, c = :viridis, colorbar = false, aspect_ratio = :equal,
+    p = contourf(
+        xc, yc, Zm; levels = 18, c = :viridis, colorbar = false, aspect_ratio = :equal,
         xlims = (-1.5, 1.0), ylims = (-0.5, 2.0), xlabel = "x", ylabel = "y",
-        title = "targeted TS search  (n=$(s.n))", size = (460, 430))
+        title = "targeted TS search  (n=$(s.n))", size = (460, 430)
+    )
     scatter!(p, [q[1] for q in s.Xs], [q[2] for q in s.Xs]; ms = 4, mc = :white, msw = 0.4, label = "evals")
     scatter!(p, [MB_min[1], MC_min[1]], [MB_min[2], MC_min[2]]; m = :utriangle, ms = 7, mc = :cyan, msw = 0.6, label = "known minima")
     scatter!(p, [S2[1]], [S2[2]]; m = :star5, ms = 9, mc = :gold, msw = 0.5, label = "true S2")

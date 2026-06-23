@@ -82,6 +82,10 @@ Batch acquisition (`q > 1`) is not yet implemented.
 """
 function acquire(al::ActiveLearner; over, maximizer = default_for(over), q::Int = 1)
     q == 1 || error("batch acquisition (q>1) not yet implemented; use q=1")
+    if over isa Box && !isempty(al.Xs)
+        length(over.lb) == _inputdim(first(al.Xs)) ||
+            throw(ArgumentError("domain dimension $(length(over.lb)) ≠ GP input dimension $(_inputdim(first(al.Xs)))"))
+    end
     return acquire(al.gp, resample(al.acq, al.rng); over = over, maximizer = maximizer)
 end
 
