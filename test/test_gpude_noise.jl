@@ -6,7 +6,7 @@
 # loss tracks the residual RMS. On a NOISY trajectory the irreducible misfit is ≈ the injected
 # noise std, so the trained σ_obs should recover σtrue to within a small factor.
 
-using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Test
+using Magpie, KernelFunctions, LinearAlgebra, Random, Test
 using OrdinaryDiffEq, SciMLSensitivity
 import DifferentiationInterface as DI
 import Mooncake
@@ -91,7 +91,7 @@ end
     Z = Magpie.kmeans_anchors(X, 6; rng = MersenneTwister(2))
     field = SVGPField(SqExponentialKernel(), Z; dout = 2)
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-    loss = ext.svgp_elbo_loss(field, [(ts, X)]; tspan = tspan)
+    loss = ext.svgp_sampled_loss(field, [(ts, X)], Magpie.SingleShooting(), tspan; nsamples = 4, seed = 0)
     v = copy(field.v0)
     fd(i) = (vp = copy(v); vp[i] += 1.0e-5; vm = copy(v); vm[i] -= 1.0e-5; (loss(vp) - loss(vm)) / 2.0e-5)
     # v = [logℓ, logσ, logσ_obs(1..dout), …] ⇒ σ_obs slots are indices 3 and 4 for dout=2.
