@@ -8,13 +8,15 @@ Morse classification of a critical point from its Hessian `H` (e.g. the `H̄` re
 saddle: exactly one negative eigenvalue in 2-D), `:max` (all negative), or `:unclassified`
 when any eigenvalue is within `ε` of zero (degenerate / ill-determined curvature).
 """
-function classify(H; ε::Real=1e-3)
+function classify(H; ε::Real = 1.0e-3)
     λ = eigvals(Symmetric(H))
-    any(<(ε), abs.(λ)) && return :unclassified
+    scale = maximum(abs, λ)
+    scale < eps() && return :unclassified                 # ~flat: curvature undetermined
+    any(<(ε * scale), abs.(λ)) && return :unclassified    # eigenvalue negligible *relative* to spectrum
     nneg = count(<(0), λ)
     nneg == 0 && return :min
     nneg == length(λ) && return :max
-    nneg == 1 ? :saddle : :unclassified
+    return nneg == 1 ? :saddle : :unclassified
 end
 
 """
@@ -27,12 +29,12 @@ critical point is nearest the basin of `x0` (min, saddle, or max) — for an ind
 between two minima, seed it from their midpoint, or use [`saddle_walk`](@ref) when the
 connecting path is curved and Newton is captured by a neighbouring extremum.
 """
-function newton_polish(g::ExactGP, x0; box::Box, iters::Int=20, λ::Real=1e-6, tol::Real=1e-8)
+function newton_polish(g::ExactGP, x0; box::Box, iters::Int = 20, λ::Real = 1.0e-6, tol::Real = 1.0e-8)
     x = collect(float.(x0))
     μ∇, _, H = grad_predict(g, x)
     for _ in 1:iters
         norm(μ∇) < tol && break
-        x = clamp.(x .- (Symmetric(H) + λ*I) \ μ∇, box.lb, box.ub)
+        x = clamp.(x .- (Symmetric(H) + λ * I) \ μ∇, box.lb, box.ub)
         μ∇, _, H = grad_predict(g, x)
     end
     return (x, μ∇, H)
@@ -56,14 +58,14 @@ is robust on curved reaction paths where Newton is captured by a neighbouring mi
 the recommended default for [`transition_state`](@ref). Returns the located point, its mean
 gradient `∇μ`, and mean Hessian `H̄` (classify with [`classify`](@ref)).
 """
-function saddle_walk(g::ExactGP, x0; box::Box, iters::Int=60, η::Real=0.05, tol::Real=1e-7)
+function saddle_walk(g::ExactGP, x0; box::Box, iters::Int = 60, η::Real = 0.05, tol::Real = 1.0e-7)
     x = collect(float.(x0))
     for _ in 1:iters
         μ∇, _, H = grad_predict(g, x)
         norm(μ∇) < tol && break
         v = eigen(Symmetric(H)).vectors[:, 1]          # lowest-curvature mode
-        F = -μ∇ + 2*dot(μ∇, v)*v                        # reflect along v: ascend it, descend rest
-        x = clamp.(x .+ η.*F, box.lb, box.ub)
+        F = -μ∇ + 2 * dot(μ∇, v) * v                        # reflect along v: ascend it, descend rest
+        x = clamp.(x .+ η .* F, box.lb, box.ub)
     end
     μ∇, _, H = grad_predict(g, x)
     return (x, μ∇, H)
@@ -71,15 +73,15 @@ end
 
 # Seed set for transition_state: the two minima plus `nseed` points jittered perpendicular to
 # the m1→m2 segment, so the GP mean carries the reaction-path structure between the basins.
-function _ts_seed(m1, m2, box; nseed::Int=5, jit::Real=0.12)
+function _ts_seed(m1, m2, box; nseed::Int = 5, jit::Real = 0.12)
     d = m2 .- m1
-    perp = [-d[2], d[1]]; perp = perp ./ max(norm(perp), 1e-9)
+    perp = [-d[2], d[1]]; perp = perp ./ max(norm(perp), 1.0e-9)
     pts = [collect(float.(m1)), collect(float.(m2))]
     for i in 1:nseed
         t = i / (nseed + 1); base = m1 .+ t .* d
-        push!(pts, clamp.(base .+ (jit*(2rand() - 1)).*perp, box.lb, box.ub))
+        push!(pts, clamp.(base .+ (jit * (2rand() - 1)) .* perp, box.lb, box.ub))
     end
-    pts
+    return pts
 end
 
 """
@@ -101,16 +103,18 @@ Returns a named tuple: `saddle` (final predicted location), `kind` (its Morse ty
 [`classify`](@ref); an index-1 saddle is `:saddle`), `g` (the fitted GP), and `history`
 (a vector of `(neval, predicted_saddle, kind)` after each acquisition, for diagnostics).
 """
-function transition_state(f, m1, m2; kernel, noise::Real=1e-3, box::Box, budget::Int=12,
-                          nseed::Int=5, predictor::Symbol=:minmode, η::Real=0.05)
+function transition_state(
+        f, m1, m2; kernel, noise::Real = 1.0e-3, box::Box, budget::Int = 12,
+        nseed::Int = 5, predictor::Symbol = :minmode, η::Real = 0.05
+    )
     m1 = collect(float.(m1)); m2 = collect(float.(m2))
-    X = _ts_seed(m1, m2, box; nseed=nseed)
-    buildgp(pts) = update(ExactGP(kernel; noise=noise), pts, [f(p) for p in pts])
+    X = _ts_seed(m1, m2, box; nseed = nseed)
+    buildgp(pts) = update(ExactGP(kernel; noise = noise), pts, [f(p) for p in pts])
     g = buildgp(X)
     mid = (m1 .+ m2) ./ 2
-    predict(gp) = predictor === :newton ? newton_polish(gp, mid; box=box) :
-                                           saddle_walk(gp, mid; box=box, η=η)
-    history = Tuple{Int,Vector{Float64},Symbol}[]
+    predict(gp) = predictor === :newton ? newton_polish(gp, mid; box = box) :
+        saddle_walk(gp, mid; box = box, η = η)
+    history = Tuple{Int, Vector{Float64}, Symbol}[]
     xs, _, H = predict(g)
     push!(history, (length(X), xs, classify(H)))
     while length(X) < budget
