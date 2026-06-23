@@ -8,7 +8,7 @@
 
 The current exemplars live as buried test files and read as *feature demos* on toy problems (unit circle, unit disk, "enumerate all 9 critical points"). They demonstrate the package but don't look like problems a user would actually bring. This phase reworks them into **realistic, narrative-driven Literate.jl tutorials** that render to the docs site and still run as regression tests — and, in doing so, exercises the new capabilities added this branch (ARD / composite kernels, the destructure-based `fit`, and a custom r²-Taylor Matérn kernel).
 
-**Tenor:** collegial and diplomatic, narrative-and-flow-first — a knowledgeable colleague walking you through solving a problem, not a stiff academic reference.
+**Tenor:** collegial and diplomatic, plain not academic. **The narrative is structural** — it lives in the section arc (problem → why it's hard → how we model it → build the approach → results/diagnostics), not in the prose. **The prose stays plain and expository** — e.g. "In chemistry, locating a transition state is expensive because each energy evaluation is a DFT calculation. We can model this kind of problem with a GP and…" — grounding the domain and stating what we do, without dramatization or flowery storytelling. Let the structure carry the story; keep sentences economical.
 
 ## Format & tooling
 
