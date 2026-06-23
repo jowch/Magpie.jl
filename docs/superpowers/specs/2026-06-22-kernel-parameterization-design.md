@@ -1,112 +1,86 @@
-# Kernel Parameterization — Design Note (explicit-parameter `(spec, ps, st)`)
+# Kernel Parameterization — Design Note
 
 **Date:** 2026-06-22
-**Status:** Design exploration / decision record — seeds a future phase (after Phase 1.5). The gating AD risk is **spiked and resolved** (see below).
-**Relates to:** [Phase 1 foundation hardening](2026-06-22-al-foundation-hardening-design.md) (Task 4 made `fit` kernel-generic over a whitelist; this note is how that generalizes), and the gp-ude branch's field training.
+**Status:** **Decided** — `destructure`-based parameterization over user-built KernelFunctions kernels. Both AD spikes pass. Seeds a future phase (after Phase 1.5).
+**Relates to:** [Phase 1 foundation hardening](2026-06-22-al-foundation-hardening-design.md) (Task 4 made `fit` kernel-generic over a whitelist; this is how that generalizes), and the gp-ude branch's field training.
 
 ## Problem
 
-`fit` today flattens a kernel to exactly `[logℓ, logσ²]` and rebuilds it as `σ²·with_lengthscale(base, ℓ)`. That model can't express **ARD** (a lengthscale per input dimension), **composite kernels** (sums/products), or **extra shape params** (RationalQuadratic's α). We want extensible hyperparameter fitting — at least ARD and composites — without blowing up complexity, and ideally without the AD fragility that comes from extracting parameters back out of a built kernel object.
+`fit` today flattens a kernel to exactly `[logℓ, logσ²]` and rebuilds it as `σ²·with_lengthscale(base, ℓ)`. That model can't express **ARD** (a lengthscale per input dimension), **composite kernels** (sums/products), or **extra shape params** (RationalQuadratic's α). We want extensible hyperparameter fitting — at least ARD and composites — without a parallel kernel DSL and without AD fragility.
 
 The constraint is **not** ForwardDiff-ability; it's the *parameterization model*. The single-`(ℓ,σ²)` reconstruction, and the `_lengthscale`/`_outputscale` peelers it relies on (also used by `LocalPenalization` and `grad_predict`), assume one scalar-lengthscale base kernel.
 
-## What the KernelFunctions ecosystem provides (v0.10.67, verified against installed source)
+## Ecosystem findings (KernelFunctions 0.10.67, verified against installed source)
 
-- KernelFunctions deliberately exposes **no parameter interface of its own**; its stated goal is to *"interoperate with generic packages for handling parameters like ParameterHandling.jl and FluxML's Functors.jl."*
-- Every kernel/transform is **`@functor`'d** (`ScaleTransform`, `ARDTransform`, `TransformedKernel`, `KernelSum`, `KernelProduct`), so Functors can walk/rebuild any kernel tree.
+- KernelFunctions exposes **no parameter interface of its own**; it is designed to *"interoperate with generic packages for handling parameters like ParameterHandling.jl and FluxML's Functors.jl."*
+- Every kernel/transform is **`@functor`'d** (`ScaleTransform`, `ARDTransform`, `TransformedKernel`, `KernelSum`, `KernelProduct`) — so Functors can walk/rebuild any kernel tree.
 - **ARD is first-class:** `with_lengthscale(base, ℓ::AbstractVector) → base ∘ ARDTransform(inv.(ℓ))`.
-- The two recommended mechanisms differ only in *constraints*: **Functors** = tree-walking (you own log/positivity + trainable scoping); **ParameterHandling** = flatten/unflatten **+** a constraint layer (`positive()`, …) — the JuliaGPs standard, and the heaviest option.
+- A KernelFunctions kernel **holds its parameter values inside the struct** (it is like a Flux model, not a Lux model — params are baked into fields, not held separately).
 
-The awkward part of both is the **reverse direction** — extracting params *out of* a built kernel and differentiating through an unflatten/reconstruct. `fit.jl` already carries a comment that it avoided ParameterHandling's unflatten "to stay AD-compatible."
+## Decision: `destructure` the user-built kernel
 
-## Decision: Lux-style explicit `(spec, ps, st)`, one-way `build`
+The user builds the kernel they want with **ordinary KernelFunctions composition** — the full kernel zoo, ARD, sums, products. `fit` then treats that kernel `k` as a **structural template**: it `destructure`s `k` (Functors) into a flat parameter vector + a `rebuild` closure, optimizes the (log-transformed) vector, and `rebuild`s the kernel. We **use KernelFunctions directly and override the baked-in param values** via the round-trip; we do **not** define a parallel `KernelSpec` type hierarchy.
 
-Adopt the Lux.jl separation. Lux models hold **no** parameters/state; `ps, st = setup(rng, model)`, the forward pass is pure `model(x, ps, st) → (y, st_new)`, AD differentiates the explicit `ps`, and `ComponentArray(ps)` gives a flat AD-transparent vector for optimizers. The reason it's AD-robust: the differentiated object is a plain nested NamedTuple/array — **no functor-walk or unflatten-of-a-reconstructed-struct in the hot path.**
+Chosen over the alternative (a `KernelSpec`/`build` hierarchy — see below) for one decisive reason: **no parallel tree of types to define and maintain.** Both are AD-clean (spikes below), so the choice is purely ergonomic, and "use KernelFunctions, add nothing" wins.
 
-Mapped onto kernels:
+### Why this is AD-safe even though the kernel carries params
 
-| Lux | Our analogue |
-|---|---|
-| `model` (architecture, no params) | **`spec`** — kernel architecture; fixes the shape of `ps`, knows how to `build` |
-| `ps` (NamedTuple of arrays) | **trainable hyperparameters**, unconstrained (log) space; `ComponentArray` for the flat optimizer view |
-| `st` (non-trained) | **frozen hyperparameters** (see adaptation below) |
-| `model(x, ps, st)` | **`build(spec, ps, st) → KernelFunctions.Kernel`** |
+A KernelFunctions kernel is a param-carrying struct, so optimizing with new params means **reconstructing the struct** from a parameter vector inside the loss — `θ → nlml(update(ExactGP(rebuild(θ)), X, y))`. That reconstruction lands in the AD tape. Spike 2 confirms it is **Mooncake-clean**. (This is the one thing Lux avoids — its layer struct holds config only, and the trainable params are a separate NamedTuple read directly; we can't be that pure because a kernel *is* its params and AbstractGPs consumes a kernel object. We pay one struct reconstruction per loss eval; it's negligible next to the O(n³) Cholesky and is what `fit` already does today via `mkkernel`.)
 
-The flow is strictly **one-way** — params live in `ps`/`st` and flow *into* construction; we never peel them back out:
+## Interface
 
-```
-(spec, ps, st) ──build──▶ KernelFunctions.Kernel ──AbstractGPs.cov──▶ K ──▶ nlml
-       └──────────────── AD differentiates ps through this chain ───────────────┘
-```
-
-### The `st` adaptation (important)
-
-A kernel is a **pure** function of its hyperparameters — unlike a Lux `BatchNorm`, there is no running statistic the forward pass mutates. So Lux's "mutable state updated by the forward pass" does not literally exist at the kernel level. We **repurpose the `st` slot for *frozen* (non-trained) hyperparameters**:
-
-- **`ps` = trained hyperparameters; `st` = frozen hyperparameters; `merge(st, ps)` = the full set `build` reads.**
-- Freezing a hyperparameter (fix σ and fit only ℓ; or gp-ude's *fixed* `lognoise`) = move that field from `ps` to `st`. Spec and `build` are unchanged; AD never sees the frozen field.
-- `st` is usually `(;)`; it stays in the signature for uniformity and freeze/unfreeze ergonomics.
-
-The genuinely Lux-style *mutable* state in our world — the conditioned cache (`C`, `α`, data) and the loop `rng` — lives one level up in the **GP model / `ActiveLearner`**, NOT in the kernel. We deliberately do not conflate kernel `(spec, ps, st)` with GP conditioned state.
-
-## Interface (pinned)
+The **public API barely changes** — the user still just builds a kernel and calls `fit`; `destructure` is internal to `fit`:
 
 ```julia
-abstract type KernelSpec end
+# user builds ANY KernelFunctions kernel — ARD, composite, whatever
+k = 2.0 * with_lengthscale(SqExponentialKernel(), ones(d)) + Matern32Kernel()
 
-# Extension point — add a kernel family by adding these two methods:
-#   init_params(s::KernelSpec) -> ps::NamedTuple        (unconstrained / log space)
-#   build(s::KernelSpec, ps, st) -> KernelFunctions.Kernel
-
-struct RBF    <: KernelSpec; dim::Int; ard::Bool; end
-struct Matern <: KernelSpec; ν::Rational; dim::Int; ard::Bool; end   # ν ∈ (1//2,3//2,5//2): a constant, not a param
-struct Sum{T<:Tuple}     <: KernelSpec; parts::T; end
-struct Product{T<:Tuple} <: KernelSpec; parts::T; end
-
-init_params(s::RBF) = (; logσ = 0.0, logℓ = s.ard ? zeros(s.dim) : 0.0)
-build(s::RBF, ps, st) = (p = merge(st, ps);
-    exp(2p.logσ) * with_lengthscale(SqExponentialKernel(), exp.(p.logℓ)))   # scalar→Scale, vector→ARD, for free
-
-init_params(s::Sum) = NamedTuple{ntuple(i -> Symbol(:k, i), length(s.parts))}(init_params.(s.parts))  # nested
-build(s::Sum, ps, st) = sum(build(p, ps[i], get(st, keys(ps)[i], (;))) for (i, p) in enumerate(s.parts))
+g = ExactGP(k; noise = 1e-4)        # unchanged constructor
+g = fit(g, X, y)                    # internally: destructure(k) → optimize log-params → rebuild → cache
+μ, σ² = predict(g, Xstar)           # uses the cached rebuilt kernel (no rebuild at predict time)
 ```
 
-- **Positivity constraints live in `build`** (`exp` the log-params) — KernelFunctions only ever sees valid positive values. No ParameterHandling.
-- **ARD is free**: `with_lengthscale` dispatches scalar→`ScaleTransform`, vector→`ARDTransform`.
-- **Composites compose**: `Sum`/`Product` specs map to `KernelSum`/`KernelProduct` with nested `ps`.
-- The `fit` loss becomes `θ -> nlml(condition(build(spec, unflatten(θ), st), X, y))`, with `θ = ComponentArray(ps)` giving the flat ↔ named bridge AD-transparently.
+Internally, `fit`:
+1. `θ_raw, rebuild = destructure(g.prior.kernel)` (Functors round-trip).
+2. Optimize `logθ` with bounded LBFGS; the kernel for a trial point is `rebuild(exp.(logθ))`.
+3. On convergence, `rebuild` once with the optimal params, re-condition the GP, cache the kernel.
+
+**Constraints (the one loose end, and it's small).** `destructure` returns *raw* values, and for our target subset (RBF / Matérn / RationalQuadratic + sums/products) **all leaves are positive** (output scales and inverse-lengthscales). So optimize `log` of the flat vector and `exp` before `rebuild` — a one-line transform layer, **not** ParameterHandling. A future bounded param (e.g. GammaExponential's γ ∈ (0,2]) gets special-cased then.
+
+**Frozen ("st") hyperparameters.** A hyperparameter you do *not* want to fit (e.g. a fixed noise, or a held lengthscale) is a leaf held *out* of the optimized set. Functors' `trainable`/`@functor` distinction is the mechanism; the flat vector then covers only trainable leaves. (This replaces the earlier `merge(st, ps)` framing — same idea, expressed through Functors' trainable-leaf selection.)
+
+**Lux mapping.** `destructure` ≈ Lux `setup` (extract the params from the template), and the GP's `predict` ≈ Lux `apply`. The kernel `k` is the structural template (Lux `model`-like), but unlike a Lux model it carries param *values* that `rebuild` overrides.
+
+## Spike results (both gating risks retired)
+
+| Spike | Mechanism | Result |
+|---|---|---|
+| 1 | explicit `build(θ)` closure (the rejected `KernelSpec` design) | Mooncake-clean — ARD + Sum, relerr ~1.5e-10 / 2.1e-10 |
+| 2 | **`destructure(k)` → optimize → `rebuild`** (the chosen design) on an ARD-RBF + Matérn composite | **Mooncake-clean — relerr 8.7e-10; `rebuild` reproduces `k` exactly** |
+
+Spike 2 also settled **leaf selection**: destructuring `2.0·withℓ(SqExp,[0.5,1,2]) + 1.0·withℓ(Matern32,0.8)` yielded exactly **6 params** — two output scales, three ARD inverse-lengthscales, one Matérn inverse-lengthscale — with **no spurious `ν`** (Matern32 is a parameterless type). For the target subset, Functors extracts exactly the trainable hyperparameters and nothing fixed.
 
 ## Convergence with Capability B (gp-ude)
 
-The gp-ude branch already trains an **explicit flat parameter vector** — `v0 = [logℓ, logσ, logσ_obs, vec(w)…]` with a documented layout (`FieldLayout`, the `NHYP` constant), and `gpfield(field, u, pf)` rebuilds the field from `pf` inside the differentiated loss. That is the Lux explicit-parameter philosophy, hand-rolled. A `(spec, ps::NamedTuple/ComponentArray)` representation is the named, composable generalization of gp-ude's `v0` — so adopting it for the active-learning `fit` **unifies both capabilities on one parameterization philosophy**, serving the "one spine" thesis.
+The gp-ude branch already trains an **explicit flat parameter vector** — `v0 = [logℓ, logσ, logσ_obs, vec(w)…]` with a documented layout (`FieldLayout`, `NHYP`), rebuilding the field from it inside the differentiated loss. `destructure`'s flat-vector + rebuild is the same philosophy, generalized to arbitrary kernels — so adopting it for the active-learning `fit` unifies both capabilities on one parameterization story, serving the "one spine" thesis.
 
-## Spike result (gating AD risk — resolved)
+## Considered alternative (rejected): `KernelSpec` / `build` hierarchy
 
-`scratch: spike_explicit_params.jl` — differentiate `θ -> nlml(update(ExactGP(build(θ)), X, y))` under **Mooncake** vs central differences, for the two cases the Functors/peeler approach struggled with:
+An abstract `KernelSpec` with `init_params(spec)` / `build(spec, ps, st)` methods per family (RBF, Matern, Sum, Product), where `ps` is a NamedTuple and `build` constructs the kernel one-way. Advantages: constraints live in `build` (`exp` the log-params), no extraction/round-trip. **Rejected** because it requires defining and maintaining a parallel type tree mirroring KernelFunctions (`RBF` spec *and* `SqExponentialKernel`, `Sum` *and* `KernelSum`) — exactly the anti-sprawl risk we want to avoid — and Spike 2 showed the round-trip it was meant to avoid is AD-clean anyway. (Spike 1 is retained as evidence that this path is also AD-viable, should the destructure approach ever hit a wall.)
 
-```
-ARD-RBF (d=3):     finite=true  relerr=1.55e-10
-Sum RBF+Matern32:  finite=true  relerr=2.09e-10   (Matérn diagonal is fine under Mooncake; ForwardDiff would NaN)
-```
+## Tradeoffs of the chosen approach
 
-The explicit-param `build` path is AD-clean under Mooncake for vector lengthscales and composites-with-Matérn. The design's central risk is retired.
+- **Raw-param constraints** — handled by the log/exp transform; trivial for the positive-only subset, needs per-param care if we add bounded params later.
+- **Leaf-selection is per-kernel** — verified clean for the subset; expanding the supported families means confirming Functors exposes only trainable leaves (use `trainable` to exclude fixed ones).
+- **Dependency** — needs Functors (already a transitive dep of KernelFunctions; promote to direct). The flat-vector flatten can be a ~10-line Functors helper, or `Optimisers.destructure` (battle-tested but pulls Optimisers), or ComponentArrays. **Open decision** — lean Functors-direct to avoid a heavy dep.
+- **Per-iteration rebuild** — one kernel reconstruction per loss eval, same as `build` and as today's `mkkernel`; negligible vs the Cholesky.
 
-## Tradeoffs
+## Open decisions (for the implementing phase)
 
-- **More upfront structure** than a Functors hack: a small `KernelSpec` hierarchy + `init_params`/`build` per family. This *is* the extensible foundation (extend-by-method, `AbstractGPModel`-style), but it's design work, not a one-liner.
-- **Two representations** — `(spec, ps, st)` (trainable) and the built KernelFunctions kernel (evaluation). Lux lives with exactly this; manage the coupling (see open decision).
-- **ComponentArrays.jl dependency** — small, SciML-core, AD-mature; lighter and more AD-proven than ParameterHandling for the flatten-to-vector need.
-- **Optimization gets harder with richer kernels** (a sum-kernel marginal likelihood is multimodal) — more restarts/priors needed; orthogonal to the parameterization but real.
-- **AD backend dispatch still applies**: the built kernel's metric picks ForwardDiff (SqEuclidean/DotProduct) vs Mooncake (Euclidean); high-dim ARD naturally routes to Mooncake (reverse-mode wins as param count grows). See the Phase-1 `_default_ad` chokepoint.
-
-## Open decision (for the implementing phase)
-
-**Where is the source of truth in the GP model?**
-- **(A, recommended) `(spec, ps, st)` is canonical; the KernelFunctions kernel is a derived cache.** Cleaner refit/serialization, fully Lux-pure, unifies with gp-ude. Larger change to `ExactGP` (it grows `spec`/`ps`/`st`; `update`/`predict` build-and-cache the kernel).
-- **(B) The built kernel stays primary; carry `(spec, ps)` only for refit.** Smaller change to `ExactGP`, but two half-sources of truth.
-
-Recommendation: **A** for the foundation — it's the one place this ripples into the spine, and doing it properly once is cheaper than half-adopting it.
+1. **Destructure dependency:** Functors + a minimal flatten helper (lean), vs `Optimisers.destructure`, vs ComponentArrays.
+2. **GP storage / source of truth:** does `ExactGP` keep the user's `k` as the template and the optimized flat params as the refit source of truth (cleaner refit/serialization), or just cache the rebuilt kernel and re-`destructure` on each `fit`? (Re-destructuring each `fit` is simplest and probably fine — `destructure` is a one-time setup cost per fit.)
+3. **AD backend:** the metric-based `_default_ad` dispatch still applies to the rebuilt kernel; high-dim ARD naturally routes to Mooncake.
 
 ## Scope / phasing
 
-This is a dedicated phase **after Phase 1.5** (multi-output spine). It is not Phase 1. The gating AD risk is already spiked; the remaining work is the `KernelSpec` hierarchy, the `ExactGP`/`fit` refactor per the open decision, and migrating `LocalPenalization`/`grad_predict`'s lengthscale access off the peelers onto `ps`/`spec`. When it lands, fold the metric-based `_default_ad` dispatch in at the same time.
+A dedicated phase **after Phase 1.5** (multi-output spine). Not Phase 1. The gating AD risks are spiked and retired. Remaining work: make `fit` destructure-based (replacing the hardcoded `mkkernel`), the log-transform constraint layer, migrate `LocalPenalization`/`grad_predict`'s lengthscale access off the `_lengthscale` peeler (it assumes a single scalar lengthscale and breaks on ARD/composites), and fold in the metric-based `_default_ad`.
