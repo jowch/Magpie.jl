@@ -80,4 +80,5 @@ end
     Hsaddle = [-1.0 0.0; 0.0 2.0]
     @test classify(1.0e-3 .* Hsaddle) == :saddle
     @test classify([0.0 0.0; 0.0 0.0]) == :unclassified   # genuinely flat → undetermined
+    @test classify([1.0e-4 0.0; 0.0 2.0e-4]) == :min   # both eigenvalues < old 1e-3 floor; relative threshold still resolves it
 end
