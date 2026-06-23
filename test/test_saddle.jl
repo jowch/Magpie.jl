@@ -95,3 +95,15 @@ end
     @test r.residual > 1.0e-2
     @test r.x == r[1] && r.H == r[3]      # positional compatibility preserved
 end
+
+@testset "transition_state is reproducible under a seeded rng" begin
+    r1 = transition_state(
+        mbt, MB_min, MC; kernel = mbkernel(), noise = NOISE, box = MB_BOX,
+        budget = 10, nseed = 5, predictor = :minmode, rng = MersenneTwister(123)
+    )
+    r2 = transition_state(
+        mbt, MB_min, MC; kernel = mbkernel(), noise = NOISE, box = MB_BOX,
+        budget = 10, nseed = 5, predictor = :minmode, rng = MersenneTwister(123)
+    )
+    @test r1.saddle == r2.saddle
+end

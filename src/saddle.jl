@@ -75,13 +75,13 @@ end
 
 # Seed set for transition_state: the two minima plus `nseed` points jittered perpendicular to
 # the m1→m2 segment, so the GP mean carries the reaction-path structure between the basins.
-function _ts_seed(m1, m2, box; nseed::Int = 5, jit::Real = 0.12)
+function _ts_seed(m1, m2, box; nseed::Int = 5, jit::Real = 0.12, rng = Random.default_rng())
     d = m2 .- m1
     perp = [-d[2], d[1]]; perp = perp ./ max(norm(perp), 1.0e-9)
     pts = [collect(float.(m1)), collect(float.(m2))]
     for i in 1:nseed
         t = i / (nseed + 1); base = m1 .+ t .* d
-        push!(pts, clamp.(base .+ (jit * (2rand() - 1)) .* perp, box.lb, box.ub))
+        push!(pts, clamp.(base .+ (jit * (2 * rand(rng) - 1)) .* perp, box.lb, box.ub))
     end
     return pts
 end
@@ -107,10 +107,11 @@ Returns a named tuple: `saddle` (final predicted location), `kind` (its Morse ty
 """
 function transition_state(
         f, m1, m2; kernel, noise::Real = 1.0e-3, box::Box, budget::Int = 12,
-        nseed::Int = 5, predictor::Symbol = :minmode, η::Real = 0.05
+        nseed::Int = 5, predictor::Symbol = :minmode, η::Real = 0.05,
+        rng = Random.default_rng()
     )
     m1 = collect(float.(m1)); m2 = collect(float.(m2))
-    X = _ts_seed(m1, m2, box; nseed = nseed)
+    X = _ts_seed(m1, m2, box; nseed = nseed, rng = rng)
     buildgp(pts) = update(ExactGP(kernel; noise = noise), pts, [f(p) for p in pts])
     g = buildgp(X)
     mid = (m1 .+ m2) ./ 2

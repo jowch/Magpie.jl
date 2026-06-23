@@ -68,13 +68,18 @@ function (a::RandStraddle)(g, x)
 end
 
 """
-    resample(a::AcquisitionFunction) -> AcquisitionFunction
+    resample(a::AcquisitionFunction[, rng]) -> AcquisitionFunction
 
 Return a copy of `a` with any per-round randomness redrawn. Stochastic acquisitions
 like [`RandStraddle`](@ref) draw a fresh band width; deterministic ones return `a`.
+The two-argument form `resample(a, rng)` injects an explicit RNG (primary method);
+the single-argument form `resample(a)` uses the RNG stored in `a` (backward-compatible
+delegate).
 """
+resample(a::AcquisitionFunction, rng) = a
+resample(a::RandStraddle, rng) = RandStraddle(a.h, sqrt(-2 * log(rand(rng))), rng)
 resample(a::AcquisitionFunction) = a
-resample(a::RandStraddle) = RandStraddle(a.h, sqrt(-2 * log(rand(a.rng))), a.rng)
+resample(a::RandStraddle) = resample(a, a.rng)
 
 @doc raw"""
     GradStraddle(; β=1.96) <: AcquisitionFunction
@@ -91,10 +96,12 @@ Sum (not min) over components: `min` is dominated by the most-resolved component
 and starves half-resolved critical points; the sum keeps explore/exploit tension
 on every component.
 """
-struct GradStraddle{T<:Real} <: AcquisitionFunction; β::T; end
-GradStraddle(; β::Real=1.96) = GradStraddle(float(β))
+struct GradStraddle{T <: Real} <: AcquisitionFunction
+    β::T
+end
+GradStraddle(; β::Real = 1.96) = GradStraddle(float(β))
 function (a::GradStraddle)(g, x)
-    μ∇, Σdiag, _ = grad_predict(g, x; hessian=false)   # acquisition needs no Hessian
+    μ∇, Σdiag, _ = grad_predict(g, x; hessian = false)   # acquisition needs no Hessian
     return sum(a.β * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
 end
 
@@ -108,13 +115,16 @@ landscapes with large gradient-magnitude variation — there the constant `−|�
 the maximizer to one region, so a single-scale loop covers it but a steep multiscale one
 does not. Call [`resample`](@ref) between rounds to redraw.
 """
-struct RandGradStraddle{R} <: AcquisitionFunction; sβ::Float64; rng::R; end
-RandGradStraddle(; rng=Random.default_rng()) = RandGradStraddle(sqrt(-2*log(rand(rng))), rng)
+struct RandGradStraddle{R} <: AcquisitionFunction
+    sβ::Float64; rng::R
+end
+RandGradStraddle(; rng = Random.default_rng()) = RandGradStraddle(sqrt(-2 * log(rand(rng))), rng)
 function (a::RandGradStraddle)(g, x)
-    μ∇, Σdiag, _ = grad_predict(g, x; hessian=false)
+    μ∇, Σdiag, _ = grad_predict(g, x; hessian = false)
     return sum(a.sβ * sqrt(Σdiag[i]) - abs(μ∇[i]) for i in eachindex(μ∇))
 end
-resample(a::RandGradStraddle) = RandGradStraddle(sqrt(-2*log(rand(a.rng))), a.rng)
+resample(a::RandGradStraddle, rng) = RandGradStraddle(sqrt(-2 * log(rand(rng))), rng)
+resample(a::RandGradStraddle) = resample(a, a.rng)
 
 @doc raw"""
     LocalPenalization(base, pts=[]; c=0.5, s=0.15) <: AcquisitionFunction
@@ -144,16 +154,17 @@ but the radius is the lengthscale ``c\ell`` (a redundancy scale) rather than LP'
 optimum-seeking ``(M-\mu)/L``, which assumes a scalar being maximized — see the package
 notes for why that radius does not transfer to this objective.
 """
-struct LocalPenalization{A<:AcquisitionFunction,P} <: AcquisitionFunction
+struct LocalPenalization{A <: AcquisitionFunction, P} <: AcquisitionFunction
     base::A; pts::P; c::Float64; s::Float64
 end
-LocalPenalization(base::AcquisitionFunction, pts=Any[]; c::Real=0.5, s::Real=0.15) =
+LocalPenalization(base::AcquisitionFunction, pts = Any[]; c::Real = 0.5, s::Real = 0.15) =
     LocalPenalization(base, pts, float(c), float(s))
 function (a::LocalPenalization)(g, x)
     isempty(a.pts) && return a.base(g, x)
-    ℓ = _lengthscale(g.prior.kernel); r = a.c*ℓ; sw = a.s*ℓ
-    return a.base(g, x) + sum(normlogcdf((norm(x .- p) - r)/sw) for p in a.pts)
+    ℓ = _lengthscale(g.prior.kernel); r = a.c * ℓ; sw = a.s * ℓ
+    return a.base(g, x) + sum(normlogcdf((norm(x .- p) - r) / sw) for p in a.pts)
 end
+resample(a::LocalPenalization, rng) = LocalPenalization(resample(a.base, rng), a.pts, a.c, a.s)
 resample(a::LocalPenalization) = LocalPenalization(resample(a.base), a.pts, a.c, a.s)
 
 @doc raw"""
