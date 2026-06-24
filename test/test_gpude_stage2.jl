@@ -106,9 +106,12 @@ end
     @test abs(res - 0.3) < 0.25                               # recovers the +0.3 residual, not 0
 end
 
-@testset "Composite(SVGP) + MultipleShooting fails clearly (E)" begin
+@testset "Composite(SVGP) + MultipleShooting trains (E)" begin
+    # Guard is removed: Composite(SVGP)+MS now routes to svgp_sampled_loss. Verify it runs.
     Zs = [[x] for x in range(-1, 1; length = 5)]
-    ts = collect(range(0, 1; length = 8)); X = reshape(collect(range(1, 0.5; length = 8)), 1, 8)
+    ts = collect(range(0, 1; length = 8)); X = reshape(collect(range(1.0, 0.5; length = 8)), 1, 8)
     cf_svgp = CompositeField((u, t) -> zero(u), SVGPField(SqExponentialKernel(), Zs; dout = 1))
-    @test_throws ArgumentError train!(cf_svgp, (ts, X); shooting = MultipleShooting(nsegments = 2))
+    ret = train!(cf_svgp, (ts, X); shooting = MultipleShooting(nsegments = 2), nsamples = 4, adam_iters = 20, maxiters = 10)
+    @test ret === cf_svgp
+    @test all(isfinite, cf_svgp.gp.v0)
 end

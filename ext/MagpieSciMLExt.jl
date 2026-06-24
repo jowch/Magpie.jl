@@ -408,9 +408,12 @@ function _train_loss(field::SVGPField, trajs, ms::Magpie.MultipleShooting, tspan
     return svgp_sampled_loss(field, trajs, ms, tspan; kw...)
 end
 
-# CompositeField: forward to field_loss (field_rhs for CompositeField is defined above).
+# CompositeField: forward to field_loss (ExactGPField inner) or svgp_sampled_loss (SVGPField inner).
 # The trained-vector layout IS the inner gp's (CompositeField delegates all layout to cf.gp).
 function _train_loss(cf::Magpie.CompositeField, trajs, shooting, tspan; kw...)
+    if cf.gp isa SVGPField
+        return svgp_sampled_loss(cf.gp, trajs, shooting, tspan; known_physics = cf.known, kw...)
+    end
     return field_loss(cf, shooting, trajs; tspan = tspan, kw...)
 end
 
@@ -426,16 +429,8 @@ end
 _train_init(cf::Magpie.CompositeField, trajs, shooting) =
     (tu = only(trajs); _init_vec(cf.gp, tu[2], tu[1], shooting))
 
-# MultipleShooting is wired for ExactGPField, CompositeField(Exact), and SVGPField.
-# CompositeField with an SVGPField inner is still unsupported (tracked follow-up).
+# MultipleShooting is wired for ExactGPField, CompositeField(Exact/SVGP), and SVGPField.
 _assert_shooting_supported(field, shooting) = nothing
-# A CompositeField with an SVGPField inner is unsupported for train! under ANY shooting:
-# the composite RHS evaluates the residual via gpfield (ExactGPField-only), and the SVGP
-# collapsed-ELBO objective does not compose through the solver path. Tracked follow-up.
-function _assert_shooting_supported(cf::Magpie.CompositeField, shooting)
-    getfield(cf, :gp) isa SVGPField && throw(ArgumentError("CompositeField with an SVGPField inner field is not supported for train! yet. Use an ExactGPField inner. (known + SVGP residual is a tracked follow-up.)"))
-    return nothing
-end
 
 # Default recipe is ADAM warm-up → LBFGS polish (verified: pure LBFGS-from-zero blows the weights up;
 # ADAM's bounded steps find the basin first). Set `adam_iters=0` for pure-LBFGS (diagnostics only).
@@ -875,7 +870,10 @@ function Magpie.propagate(
 end
 
 # Internal Pathwise integrator for CompositeField: `du = known(u,t) + sampler_i(u)`.
-_pathwise_composite(gps, known, u0, tspan, ts, m::Magpie.Pathwise) =
+# Dispatch on ExactGP inner (default) or SparseGP inner (SVGPField residual).
+_pathwise_composite(gps::AbstractVector{<:ExactGP}, known, u0, tspan, ts, m::Magpie.Pathwise) =
     _pathwise_integrate(gps, _exact_pathwise_sampler, u0, tspan, ts, m; known = known)
+_pathwise_composite(gps::AbstractVector{<:SparseGP}, known, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(gps, _svgp_pathwise_sampler, u0, tspan, ts, m; known = known)
 
 end # module

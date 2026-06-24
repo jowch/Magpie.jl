@@ -107,3 +107,30 @@ end
     @info "SVGP MS 1D calibration" cov90
     @test abs(cov90 - 0.9) < 0.25
 end
+
+@testset "Task 5: Composite(SVGP) trains + recovers residual + Pathwise ensemble" begin
+    # 1D scalar ODE: known = -0.5u, residual = +0.3 (constant offset).
+    # The GP must learn to output ≈0.3 at states visited during training.
+    known(u, t) = -0.5 .* u
+    f!(du, u, p, t) = (du .= known(u, t); du .+= 0.3; nothing)
+    u0 = [1.0]; tspan = (0.0, 4.0); ts = collect(range(tspan...; length = 40))
+    target = Array(solve(ODEProblem(f!, u0, tspan), Tsit5(); saveat = ts))
+    X = target .+ 0.02 .* randn(MersenneTwister(11), size(target))
+    cf = CompositeField(known, SVGPField(SqExponentialKernel(), kmeans_anchors(X, 6; rng = MersenneTwister(3)); dout = 1))
+
+    # train! must not throw (guard removed) and must return the field
+    ret = train!(cf, (ts, X); nsamples = 8, adam_iters = 300, maxiters = 80)
+    @test ret === cf
+
+    # posterior returns SparseGPs (SVGPField inner); predmean callable
+    gps = posterior(cf)
+    @test gps[1] isa Magpie.SparseGP
+    res = predmean(gps[1], [0.5])
+    @test isfinite(res)
+    @test abs(res - 0.3) < 0.3    # recovers the +0.3 residual within tolerance
+
+    # Pathwise ensemble exercises the SparseGP composite dispatch
+    ens = propagate(cf, u0, tspan; method = Pathwise(64), ts = ts)
+    @test size(ens) == (64, 1, length(ts))
+    @test all(isfinite, ens)
+end

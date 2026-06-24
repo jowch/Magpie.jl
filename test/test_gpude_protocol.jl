@@ -223,7 +223,7 @@ end
 @testset "CompositeField support matrix (propagate axis)" begin
     # Pin the propagate-axis support matrix for CompositeField:
     #   ExactGPField inner: posterior✓  Pathwise✓  PULL✗ (intentional error)
-    #   SVGPField inner:    train!✗ (fail-clear ArgumentError — gpfield is ExactGPField-only; tracked follow-up)
+    #   SVGPField inner:    train!✓ (sampled ELBO)  posterior returns SparseGPs  predmean✓
     # Uses a simple 1D scalar ODE so the test runs fast.
     rng = MersenneTwister(7)
     known(u, t) = -0.3 .* u
@@ -239,8 +239,9 @@ end
     @test size(ens, 3) == length(ts)
     @test_throws Exception propagate(cf_ex, u0, tspan; method = PULL(), ts = ts)
 
-    # SVGP inner: train! is unsupported (fails clearly) — gpfield is ExactGPField-only. Tracked follow-up.
+    # SVGP inner: train! now routes to sampled ELBO; posterior returns SparseGPs; predmean callable.
     Zs = kmeans_anchors(X, 5; rng = MersenneTwister(2))
     cf_sv = CompositeField(known, SVGPField(SqExponentialKernel(), Zs; dout = 1))
-    @test_throws ArgumentError train!(cf_sv, (ts, X); adam_iters = 10, maxiters = 5)
+    train!(cf_sv, (ts, X); nsamples = 8, adam_iters = 100, maxiters = 40)
+    @test isfinite(predmean(posterior(cf_sv)[1], [0.5]))
 end
