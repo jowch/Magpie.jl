@@ -1,7 +1,7 @@
 # Multi-output SVGP field gradient gate — env-gated under MAGPIE_TEST_SCIML.
-# Promotes scratch/spike_capb_svgp_mo.jl (relerr 8.4e-5) to a permanent gate.
-# Tests: Mooncake gradient vs finite-differences on the shared-Z multi-output multi-trajectory ELBO;
-# asserts ∂/∂Z and ∂/∂μ norms are nonzero (shared-Z + per-output μ both live).
+# Tests: Mooncake gradient vs finite-differences on the shared-Z multi-output multi-trajectory
+# SAMPLED ELBO; asserts ∂/∂Z, ∂/∂μ, and ∂/∂L_S are all nonzero (shared-Z + per-output μ + the
+# variational factor L_S all live under the sampled objective).
 
 using Magpie, KernelFunctions, AbstractGPs, LinearAlgebra, Random, Test
 using OrdinaryDiffEq, SciMLSensitivity
@@ -36,27 +36,11 @@ using Magpie: SVGPField, nLS
     relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
     Zb = (H + 1):(H + 2 * M);  μb = (H + 2 * M + 1):(H + 2 * M + M * 2)
     @info "SVGP-MO grad" relerr norm_dZ = norm(g_fd[Zb]) norm_dμ = norm(g_fd[μb])
-    @test relerr < 1.0e-3                                  # spike: 8.4e-5
-    # Shared-Z and per-output μ gradients must both be live
+    @test relerr < 1.0e-3                                  # FD-matched (achieved ~1e-4)
+    # Shared-Z, per-output μ, AND the variational factor L_S gradients must all be live.
     @test norm(g_fd[Zb]) > 1.0e-2
     @test norm(g_fd[μb]) > 1.0e-2
-end
-
-@testset "trace-corrected SVGP ELBO: gradient sound + L_S coupled" begin
-    rng = MersenneTwister(7)
-    # 2D inducing points to match the 2D (cos,sin) trajectory state space (D must equal dout here)
-    Z2d = [[x, y] for x in range(-1.0, 1.0; length = 2) for y in range(-1.0, 1.0; length = 2)]
-    field = SVGPField(Magpie._kernel(0.0, 0.0), Z2d; dout = 2)
-    ts = collect(range(0.0, 2.0; length = 12))
-    Xtrue = hcat([[cos(t), sin(t)] for t in ts]...)
-    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-    loss = ext.svgp_elbo_loss(field, [(ts, Xtrue)]; tspan = (0.0, 2.0))
-    v = copy(field.v0)
-    g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v)
-    g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v)[1]
-    relerr = norm(g_mc .- g_fd) / (norm(g_fd) + 1.0e-8)
-    @test relerr < 1.0e-3
-    # An L_S diagonal slot now receives gradient from the data (was ~0 from KL-only at S=I).
+    # L_S receives gradient from the data through the reparameterized sample u_s = L_ZZ(μ + L_S·ε).
     ls_idx = 2 + field.dout + field.D * field.M + field.M * field.dout + 1   # first L_S raw entry
     @test abs(g_mc[ls_idx]) > 1.0e-6
 end
