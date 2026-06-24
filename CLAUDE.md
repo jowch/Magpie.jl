@@ -69,3 +69,5 @@ A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, no
 ### Pedagogical intent
 
 Understanding the numerics deeply is a motivation, not the deliverable. Keep the **public API clean and performant**; put literate/derivation content in companion notebooks, not in verbose core code.
+
+When writing or reworking the worked examples in `examples/` (Literate.jl tutorials rendered to the docs site and run as CI anti-rot tests), follow **[`examples/STYLE.md`](examples/STYLE.md)** — the example authoring style guide. The load-bearing rule: examples are **problem-driven, not feature-driven**, and **the narrative is structural while the prose stays plain and expository** (collegial, not academic or flowery). It also covers honesty/no-overclaiming, what diagnostics and baselines to show, kernel composition, cross-example coherence, and the Literate/`#src`/`docs/make.jl` mechanics.
