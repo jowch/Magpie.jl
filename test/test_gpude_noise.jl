@@ -45,7 +45,7 @@ end
     Zg = Magpie.kmeans_anchors(clean, M; rng = MersenneTwister(3))
     field = SVGPField(SqExponentialKernel(), Zg; dout = 2)
     train!(
-        field, (ts, Xnoisy); tspan, adam_iters = 800, maxiters = 200,
+        field, (ts, Xnoisy); tspan, nsamples = 4, adam_iters = 300, maxiters = 60,
         λ = 1 / (15 * 2), s = 0.5
     )
     lo_vec = unpack(field, field.v0).logσ_obs            # length-dout vector (dout=2, same noise on both)

@@ -15,7 +15,7 @@ using OrdinaryDiffEq, SciMLSensitivity
 
     # Train one SVGP field via sampled ELBO (trace term OFF; variance from sampling).
     field = SVGPField(Magpie._kernel(0.0, 0.0), Z; dout = 1)
-    train!(field, (ts, X); nsamples = 16, adam_iters = 600, maxiters = 150)
+    train!(field, (ts, X); nsamples = 8, adam_iters = 400, maxiters = 100)   # Task 6: trimmed
 
     # Held-out propagation from a fresh IC; Pathwise ensemble → per-step moments → coverage.
     u0h = [1.2]
@@ -32,7 +32,7 @@ using OrdinaryDiffEq, SciMLSensitivity
             )
     ]
 
-    ens = propagate(field, u0h, (0.0, 5.0); method = Pathwise(256), ts = tsh)
+    ens = propagate(field, u0h, (0.0, 5.0); method = Pathwise(128), ts = tsh)
     μ, Σ = pathwise_moments(ens)
 
     cov90 = coverage(truth, μ, Σ; level = 0.9)

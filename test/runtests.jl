@@ -10,6 +10,10 @@ using Test
     include("test_exemplar_B_grad.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_stage1.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_sampled.jl")
+    # Heavy through-solver SVGP calibration/recovery on nonlinear LV (spec §5.5): each test is a
+    # minutes-long Mooncake-compiled training, so it is gated behind a SEPARATE slow flag (same
+    # rationale as the docs-example LV recovery) — out of the default suite to keep it reliable.
+    get(ENV, "MAGPIE_TEST_SCIML_SLOW", "") == "true" && include("test_gpude_sampled_calib.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_guard.jl")
     get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_protocol.jl")
     # NOTE: the slow LV end-to-end recovery is gated by examples/gp_ude_lotka_volterra.jl's #src

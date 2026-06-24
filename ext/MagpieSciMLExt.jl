@@ -169,7 +169,9 @@ Matheron reparameterization:
   `vcorr_i = K_ZZ⁻¹ · (u_s_i − Φw_i)`  where `Φw_i[j] = wᵢᵀ φᵢ(Zⱼ)`.
 
 Jitter: relative `field.jitter · σ²` on `K_ZZ` (Mooncake Cholesky-backward safety), via `_chol`.
-Dense matrix ops only on the AD path (no LowerTriangular backsolve): `LZZ = Matrix(C.L)`.
+Dense matrix ops on the AD path: `LZZ = Matrix(C.L)` for the `u_s = LZZ·(…)` product, and the
+`vcorr` solve goes through the `_chol` Cholesky factor `C` (LAPACK potrs!) — both Mooncake-clean
+(no `LowerTriangular`/`Symmetric` backsolve that can miscompile).
 Each output dimension has an independent RFF prior draw (per-output `ω/w`).
 """
 function svgp_sample_rhs(field::SVGPField, v, e)
@@ -187,7 +189,7 @@ function svgp_sample_rhs(field::SVGPField, v, e)
     # Relative jitter: field.jitter · σ² matches field_rhs convention
     jit = field.jitter * σ2
     C = _chol(kernelmatrix(k, Zvec) + jit * I)
-    LZZ = Matrix(C.L)               # dense for Mooncake-safe backsolve
+    LZZ = Matrix(C.L)               # dense factor for the u_s matmul (Mooncake-safe); vcorr solve uses C\·
     μ = Magpie.svgp_μ(field, v)     # M×dout
     # Per-output: scale the frozen unit noise to get trained ω/w, then compute vcorr.
     ω_all = e.ω ./ ℓ                # D × Drff × dout
