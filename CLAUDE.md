@@ -62,6 +62,18 @@ Locked decisions:
 2. **GP-in-SciML bridge** (`docs/research/gp-ude.md`) — GP as ODE field, **through-the-solver**, `GaussAdjoint`+`MooncakeVJP` (outer Mooncake). ✅ **done** (on the `gp-ude` branch): `ExactGPField` (exact-regression field) + `SVGPField` (sparse, trained via a **sampled reparameterized Matheron ELBO** — the decoupled sampler is now on the AD training path, replacing the earlier mean-field+local-trace surrogate) + `CompositeField` (known physics + GP residual); both `SingleShooting` and `MultipleShooting`; the ergonomic `train!`/`posterior`/`propagate` API. Multi-class BALD and high-D latent embedding remain deferred.
 3. *(Then, only if pulled by use:)* linear-constraint kernels, latent-space embedding for high-D dynamics, more likelihoods.
 
+### Next (post–Capability-B)
+
+Capabilities A and B are built and reviewed on the `gp-ude` branch. The deliberate next step is **consolidation, then use-pulled features** — not speculative breadth.
+
+- **Land Capability B on `main`.** Three validated rounds (correctness foundation → ergonomic API → SVGP sampled-ELBO) sit on `gp-ude`; merge them so `main` carries the whole GP-in-SciML bridge before new work.
+- **Application showcase (recommended driver).** Per the thesis — *the bridges are the product; SAXS / dynamics-discovery are examples* — build one real end-to-end use. A genuine application stress-tests the API, surfaces gaps, and **tells us which step-3 feature the use actually pulls** (rather than guessing).
+- **Candidate step-3 features** (build when an application pulls them):
+  - **Linear-constraint kernels** — divergence-free / curl-free / linear-PDE-constrained GPs (in scope; only *linear*-constraint kernels, per anti-sprawl).
+  - **Latent-space embedding** — GP-UDE in a learned latent space for high-dimensional dynamics.
+  - **Multi-class BALD** — the one Capability-A piece deferred (needs AugmentedGPLikelihoods.jl).
+- **Tracked follow-ups from the SVGP arc** (non-blocking hygiene): re-derive `examples/gp_ude_scale_forcing.jl` recovery thresholds for the sampled objective (it's a by-hand demo now — multi-trajectory sampled training exceeds the 30-min docs-CI budget); optional nightly/scheduled job running the `MAGPIE_TEST_SCIML_SLOW` calibration file; optionally strengthen the §5.3 estimator-consistency gate to value-equivalence against the analytic mean-field+trace form.
+
 A custom `EnzymeRules` adjoint for the GP solve is a *deferred optimization*, not v1 — Mooncake differentiates the dense path today (the earlier "Enzyme adjoint first" plan was overturned by reconnaissance; see `critique.md`).
 
 **Spikes resolved** (June 2026, `docs/research/spike-results.md`): (1) GP-in-ODE through-solver diff ✅ works (`GaussAdjoint`+`MooncakeVJP`, outer Mooncake; `MooncakeVJP` is unexported but benchmarked ~6× faster than the `ReverseDiffVJP` fallback; `MooncakeAdjoint` buggy); (3) `update_chol` under Mooncake ✅ works (so reuse it). (2) Laplace under Mooncake ✅ resolved — reusing ApproximateGPs' Laplace fails (a `@debug`-macro `try/catch`), but a clean from-scratch Laplace differentiates under Mooncake (Spike 4), so own a ~20-line Laplace and binary BALD is unblocked; (4) GP-UDE cost ⚠️ measured for the worst case (recompute RHS ~GiB at n≈200; ≈n²/≈linear-in-steps) — use the cached-α/inducing design. Remaining empirical work: cost of the cached/inducing GP-UDE field; multiple shooting.
