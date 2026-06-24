@@ -44,8 +44,10 @@ jobs:
           - gp_ude_lotka_volterra.jl
           - gp_ude_vanderpol.jl
           - gp_ude_fitzhugh_nagumo.jl
-          - gp_ude_scale_forcing.jl
           - gp_ude_identifiability.jl
+          # gp_ude_scale_forcing.jl is a by-hand SVGP demo: multi-trajectory training under the
+          # sampled (Matheron) ELBO is S× the solves and exceeds this job's 30-min anti-rot budget.
+          # SVGP-API anti-rot is covered by the package test suite (test_gpude_sampled*.jl).
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2

@@ -1,5 +1,11 @@
 # # GP-UDE: scale-forcing (multi-output SVGP + Pathwise)
 #
+# **By-hand demo (not in CI).** Multi-trajectory SVGP training under the sampled (Matheron) ELBO
+# costs `nsamples`× the ODE solves, so this 12-trajectory fit exceeds the docs-examples CI
+# anti-rot budget; run it locally. NOTE: the recovery `#src` thresholds below were tuned for the
+# previous mean-field objective; re-derive them for the sampled objective (and pick an
+# `nsamples`/iters budget) when running by hand. SVGP-API anti-rot lives in the test suite.
+#
 # Multi-trajectory Lotka-Volterra: 12 trajectories from varied initial conditions
 # cover a 2-D region, producing N ≈ 12×15 = 180 **noisy** observations pooled across
 # M = 24 inducing points — genuine **scale-forcing** where N ≫ M.
@@ -93,11 +99,14 @@ Z = kmeans_anchors(allstates, 24; rng = MersenneTwister(2))
 # the first steps, which causes exp(2logσ)→0 and hits KernelFunctions' σ²>0 constraint).
 field = SVGPField(SqExponentialKernel(), Z; dout = 2, logℓ0 = log(0.5), logσ0 = log(0.5))
 
-# `train!(field, trajectories)` — multi-trajectory ELBO optimisation (ADAM → LBFGS).
+# `train!(field, trajectories)` — multi-trajectory SAMPLED-ELBO optimisation (ADAM → LBFGS).
+# `nsamples`: number of frozen-ε Matheron samples averaged per gradient (variance ∝ 1/nsamples).
+# Through-the-solver SVGP training is S× the solves, so a demo uses a modest budget (the CI
+# anti-rot job is time-boxed); raise nsamples/iters for production-quality recovery.
 # `λ=1/(15*2*length(trajs))` normalises the logℓ prior by total observations.
 # adam_lr=0.01: lower than the default 0.05 — SVGP has many trainable params (Z is trainable)
 # and a conservative step size prevents the optimizer from exploring σ²→0 pathologies.
-train!(field, trajs; tspan, maxiters = 300, λ = 1 / (15 * 2 * length(trajs)), adam_lr = 0.01)
+train!(field, trajs; tspan, nsamples = 8, adam_iters = 400, maxiters = 200, λ = 1 / (15 * 2 * length(trajs)), adam_lr = 0.01)
 
 # ## Posterior SparseGPs — field recovery check
 #

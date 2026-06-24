@@ -866,7 +866,7 @@ function Magpie.propagate(
                 "uncertainty propagation (it correctly integrates known_physics + GP sample)."
         )
     end
-    gps = Magpie.posterior(cf)   # residual ExactGPs
+    gps = Magpie.posterior(cf)   # residual GPs (ExactGP or SparseGP, per the inner field)
     known = cf.known
     return _pathwise_composite(gps, known, u0, tspan, ts, method)
 end
