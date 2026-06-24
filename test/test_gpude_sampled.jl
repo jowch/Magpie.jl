@@ -61,7 +61,7 @@ end
     u0 = [1.0, 1.0]
     tspan = (0.0, 2.5)
     ts = collect(range(tspan...; length = 60))
-    clean = Array(solve(ODEProblem(lv!, u0, tspan), Tsit5(); saveat = ts, abstol = 1e-9, reltol = 1e-9))
+    clean = Array(solve(ODEProblem(lv!, u0, tspan), Tsit5(); saveat = ts, abstol = 1.0e-9, reltol = 1.0e-9))
     X = clean .+ 0.02 .* randn(MersenneTwister(1), size(clean))
     field = SVGPField(SqExponentialKernel(), kmeans_anchors(X, 15; rng = MersenneTwister(7)); dout = 2)
     train!(field, (ts, X); nsamples = 16, adam_iters = 600, maxiters = 150)
@@ -70,4 +70,40 @@ end
     cov90 = coverage([collect(clean[:, k]) for k in 1:length(ts)], μ, Σ; level = 0.9)
     @info "SVGP SS LV calibration" cov90
     @test abs(cov90 - 0.9) < 0.2          # nonlinear regime; the real correctness gate
+end
+
+@testset "Task 4: SVGP+MultipleShooting — grad incl ∂s0, runs e2e" begin
+    ext = Base.get_extension(Magpie, :MagpieSciMLExt)
+    a = -0.3; ts = collect(range(0.0, 6.0; length = 24)); X = reshape(exp.(a .* ts), 1, 24)
+    field = SVGPField(SqExponentialKernel(), [[x] for x in range(0, 2; length = 4)]; dout = 1)
+    ms = MultipleShooting(nsegments = 4)
+    trajs = [(ts, X)]
+    loss = ext.svgp_sampled_loss(field, trajs, ms, (0.0, 6.0); nsamples = 4, seed = 2)
+    off = length(field.v0)
+    s0 = hcat([X[:, round(Int, i)] for i in range(1, 24; length = 4)]...)
+    v = vcat(copy(field.v0), vec(s0))
+    g_mc = DI.gradient(loss, DI.AutoMooncake(; config = nothing), v)
+    g_fd = FiniteDifferences.grad(central_fdm(5, 1), loss, v)[1]
+    relerr = norm(g_mc .- g_fd) / max(norm(g_fd), eps())
+    @info "Task 4 grad gate" relerr
+    @test relerr < 5.0e-3
+    s2 = (off + 1 + 1):(off + 2)                       # a free s0 node entry
+    @test norm(g_fd[s2]) > 1.0e-5                       # ∂loss/∂s0 live
+end
+
+@testset "Task 4: train! SVGP+MultipleShooting recovers (1D decay, long horizon)" begin
+    # 1D linear decay. Light budget exercises the full SVGP+MS wiring end-to-end
+    # (s0 packing, guard removed, sampled-ELBO through MultipleShooting solver path).
+    # nsamples=8, 8 segments, 300 ADAM + 80 LBFGS — per task brief (§IMPORTANT budgets).
+    a = -0.3; u0 = [2.0]; tspan = (0.0, 6.0); ts = collect(range(tspan...; length = 36))
+    clean = reshape(u0[1] .* exp.(a .* ts), 1, 36)
+    X = clean .+ 0.02 .* randn(MersenneTwister(2), size(clean))
+    field = SVGPField(Magpie._kernel(0.0, 0.0), [[x] for x in range(0, 2; length = 5)]; dout = 1)
+    train!(field, (ts, X); shooting = MultipleShooting(nsegments = 8), nsamples = 8, adam_iters = 300, maxiters = 80)
+    @test all(isfinite, field.v0)
+    ens = propagate(field, u0, tspan; method = Pathwise(64), ts = ts)
+    μ, Σ = pathwise_moments(ens)
+    cov90 = coverage([collect(clean[:, k]) for k in 1:length(ts)], μ, Σ; level = 0.9)
+    @info "SVGP MS 1D calibration" cov90
+    @test abs(cov90 - 0.9) < 0.25
 end

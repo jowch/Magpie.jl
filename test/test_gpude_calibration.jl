@@ -22,14 +22,14 @@ using OrdinaryDiffEq, SciMLSensitivity
     tsh = collect(range(0.0, 5.0; length = 25))
     truth = [
         collect(c) for c in eachcol(
-            Array(
-                solve(
-                    ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0h, (0.0, 5.0)),
-                    Tsit5();
-                    saveat = tsh,
+                Array(
+                    solve(
+                        ODEProblem((du, u, p, t) -> (du[1] = a * u[1]), u0h, (0.0, 5.0)),
+                        Tsit5();
+                        saveat = tsh,
+                    ),
                 ),
-            ),
-        )
+            )
     ]
 
     ens = propagate(field, u0h, (0.0, 5.0); method = Pathwise(256), ts = tsh)
