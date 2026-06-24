@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Müller–Brown: a transition state from one known minimum · Magpie.jl</title><meta name="title" content="Müller–Brown: a transition state from one known minimum · Magpie.jl"/><meta property="og:title" content="Müller–Brown: a transition state from one known minimum · Magpie.jl"/><meta property="twitter:title" content="Müller–Brown: a transition state from one known minimum · Magpie.jl"/><meta name="description" content="Documentation for Magpie.jl."/><meta property="og:description" content="Documentation for Magpie.jl."/><meta property="twitter:description" content="Documentation for Magpie.jl."/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img class="docs-light-only" src="../../assets/logo.svg" alt="Magpie.jl logo"/><img class="docs-dark-only" src="../../assets/logo-dark.svg" alt="Magpie.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Magpie.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../levelset_straddle/">Level-set recovery (Straddle)</a></li><li><a class="tocitem" href="../bald_classification/">Decision boundary (BinaryBALD)</a></li><li class="is-active"><a class="tocitem" href>Müller–Brown: a transition state from one known minimum</a><ul class="internal"><li><a class="tocitem" href="#Setup"><span>Setup</span></a></li><li><a class="tocitem" href="#The-potential-and-its-landscape"><span>The potential and its landscape</span></a></li><li><a class="tocitem" href="#Taming-the-dynamic-range"><span>Taming the dynamic range</span></a></li><li><a class="tocitem" href="#A-custom-anisotropic-Matérn-kernel"><span>A custom anisotropic Matérn kernel</span></a></li><li><a class="tocitem" href="#Finding-the-escape-transition-state-from-one-known-minimum"><span>Finding the escape transition state from one known minimum</span></a></li><li><a class="tocitem" href="#Landscape-and-the-climb"><span>Landscape and the climb</span></a></li><li><a class="tocitem" href="#Surrogate-at-the-end-of-the-loop"><span>Surrogate at the end of the loop</span></a></li><li><a class="tocitem" href="#Correctness:-the-Hessian-diagnostic"><span>Correctness: the Hessian diagnostic</span></a></li><li><a class="tocitem" href="#Convergence-vs-a-random-baseline"><span>Convergence vs a random baseline</span></a></li><li><a class="tocitem" href="#Takeaway"><span>Takeaway</span></a></li></ul></li><li><a class="tocitem" href="../volcano_terrain/">Volcano terrain: Morse critical points of a DEM</a></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Müller–Brown: a transition state from one known minimum</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Müller–Brown: a transition state from one known minimum</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/jowch/Magpie.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/jowch/Magpie.jl/blob/main/examples/muller_brown.jl" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Müller–Brown:-a-transition-state-from-one-known-minimum"><a class="docs-heading-anchor" href="#Müller–Brown:-a-transition-state-from-one-known-minimum">Müller–Brown: a transition state from one known minimum</a><a id="Müller–Brown:-a-transition-state-from-one-known-minimum-1"></a><a class="docs-heading-anchor-permalink" href="#Müller–Brown:-a-transition-state-from-one-known-minimum" title="Permalink"></a></h1><p>The <a href="https://doi.org/10.1007/BF00547608">Müller–Brown potential</a> (Müller &amp; Brown, <em>Theor. Chim. Acta</em> <strong>53</strong>, 75 (1979)) is the standard 2-D benchmark for <strong>transition-state search</strong>: a sum of four Gaussians with three minima (metastable states) joined by two index-1 saddles (the transition states on the minimum-energy path between basins).</p><p>In chemistry, locating a transition state is expensive because each energy evaluation is a DFT calculation. We can model this with a GP: treat the potential as a black-box <code>f : ℝ² → ℝ</code>, start from <strong>one known stable state</strong> (<code>MC_min</code>, the deep right basin), and find the transition state leading out of it by climbing the GP surrogate&#39;s softest mode — evaluating the true <code>f</code> only when the walk predicts a new saddle candidate. This is the single-ended (dimer-on-GP) workflow used in <a href="https://doi.org/10.1063/1.5017103">Denzel &amp; Kästner (2018)</a>, here on the canonical toy surface.</p><h2 id="Setup"><a class="docs-heading-anchor" href="#Setup">Setup</a><a id="Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Setup" title="Permalink"></a></h2><pre><code class="language-julia hljs">ENV[&quot;GKSwstype&quot;] = &quot;100&quot;  ## GR headless rendering (no display required)
+
+using Magpie, KernelFunctions, LinearAlgebra, Random
+using Statistics: mean, std
+using Plots; gr()
+import KernelFunctions as KF</code></pre><h2 id="The-potential-and-its-landscape"><a class="docs-heading-anchor" href="#The-potential-and-its-landscape">The potential and its landscape</a><a id="The-potential-and-its-landscape-1"></a><a class="docs-heading-anchor-permalink" href="#The-potential-and-its-landscape" title="Permalink"></a></h2><p>The four Gaussians give a deep right basin, a shallow central basin, and a high-left basin, separated by two saddles. We work on the conventional window and clip the steep exponential walls for display (the true <code>f</code> reaches ~10³ at the corners).</p><pre><code class="language-julia hljs">const A = (-200.0, -100.0, -170.0, 15.0)
+const aa = (-1.0, -1.0, -6.5, 0.7);  const bb = (0.0, 0.0, 11.0, 0.6)
+const cc = (-10.0, -10.0, -6.5, 0.7)
+const x0 = (1.0, 0.0, -0.5, -1.0);   const y0 = (0.0, 0.5, 1.5, 1.0)
+
+function mullerbrown(p)
+    x, y = p[1], p[2]; s = 0.0
+    for k in 1:4
+        dx = x - x0[k]; dy = y - y0[k]
+        s += A[k] * exp(aa[k] * dx^2 + bb[k] * dx * dy + cc[k] * dy^2)
+    end
+    return s
+end
+
+box = Box([-1.5, -0.5], [1.0, 2.0])</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Box{Vector{Float64}}([-1.5, -0.5], [1.0, 2.0])</code></pre><p>The five true critical points (literature values): three minima and two index-1 saddles. <code>MC_min</code> is the deep right basin — the one we start from. <code>S2</code> is the transition state leading out of it toward the central basin <code>MB_min</code>.</p><pre><code class="language-julia hljs">const MA_min = [-0.558, 1.442]    # high-left minimum
+const MB_min = [-0.05, 0.467]     # shallow central minimum
+const MC_min = [0.623, 0.028]     # deep right minimum (starting point)
+const S1 = [-0.822, 0.624]        # saddle between MA and MB
+const S2 = [0.212, 0.293]         # saddle between MB and MC  (escape TS from MC_min)
+
+truth = [MA_min, MB_min, MC_min, S1, S2]
+true_kinds = [:min, :min, :min, :saddle, :saddle]
+
+xl = range(-1.5, 1.0; length = 100); yl = range(-0.5, 2.0; length = 100)
+Vclip(p) = min(mullerbrown(p), 150.0)                 ## clip walls for a readable contour
+Zf = [Vclip([xi, yj]) for yj in yl, xi in xl]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">100×100 Matrix{Float64}:
+ 135.338   130.032   125.045   120.355   …  150.0     150.0     150.0
+ 127.423   122.473   117.819   113.441      150.0     150.0     150.0
+ 120.074   115.451   111.104   107.015      144.888   150.0     150.0
+ 113.244   108.924   104.861   101.037      134.751   142.899   150.0
+ 106.892   102.851    99.0493   95.4705     123.743   131.777   140.424
+ 100.978    97.1958   93.6356   90.2831  …  111.817   119.743   128.289
+  95.4681   91.9242   88.5874   85.4441      98.965   106.788   115.241
+  90.3279   87.0051   83.875    80.9252      85.2264   92.9529  101.319
+  85.5274   82.4094   79.4709   76.7002      70.6951   78.3304   86.6181
+  81.0378   78.1099   75.3493   72.7448      55.5233   63.0735   71.2899
+   ⋮                                     ⋱                      
+  21.9584   21.8431   21.7465   21.6679     150.0     150.0     150.0
+  22.4281   22.3197   22.2308   22.1607     150.0     150.0     150.0
+  22.9277   22.8262   22.7449   22.6832     150.0     150.0     150.0
+  23.4589   23.3645   23.2908   23.2375     150.0     150.0     150.0
+  24.0235   23.9364   23.8705   23.8256  …  150.0     150.0     150.0
+  24.6236   24.5438   24.486    24.4498     150.0     150.0     150.0
+  25.261    25.189    25.1394   25.1122     150.0     150.0     150.0
+  25.9379   25.874    25.8331   25.8152     150.0     150.0     150.0
+  26.6568   26.6013   26.5696   26.5615     150.0     150.0     150.0</code></pre><p>The landscape: minima (circles) and saddles (diamonds) are the five critical points. We start from <code>MC_min</code> — the deep right basin — and ask: where is the transition state leading out of it?</p><pre><code class="language-julia hljs">plt_contour = contourf(
+    xl, yl, Zf; levels = 20, c = :viridis, colorbar_title = &quot;V (clipped)&quot;,
+    aspect_ratio = :equal, xlims = (-1.5, 1.0), ylims = (-0.5, 2.0),
+    xlabel = &quot;x&quot;, ylabel = &quot;y&quot;, title = &quot;Müller–Brown potential&quot;
+)
+for (kind, mk, col, lab) in ((:min, :circle, :white, &quot;minima&quot;), (:saddle, :diamond, :orange, &quot;saddles (TS)&quot;))
+    idx = findall(==(kind), true_kinds)
+    scatter!(
+        plt_contour, [truth[i][1] for i in idx], [truth[i][2] for i in idx];
+        m = mk, ms = 8, mc = col, msw = 1.2, label = lab
+    )
+end
+scatter!(
+    plt_contour, [MC_min[1]], [MC_min[2]];
+    m = :star5, ms = 10, mc = :cyan, msw = 1.0, label = &quot;MC_min (start)&quot;
+)
+plt_surface = surface(
+    xl, yl, Zf; c = :viridis, colorbar = false, camera = (35, 45),
+    xlabel = &quot;x&quot;, ylabel = &quot;y&quot;, zlabel = &quot;V&quot;, title = &quot;the basins and barriers&quot;
+)
+plot(plt_contour, plt_surface; layout = (1, 2), size = (960, 410))</code></pre><img src="2f93b959.svg" alt="Example block output"/><p>The minima are metastable chemical states; the saddles are the transition states that gate the rate of hopping between them. <code>S2</code> is the escape saddle from <code>MC_min</code>.</p><h2 id="Taming-the-dynamic-range"><a class="docs-heading-anchor" href="#Taming-the-dynamic-range">Taming the dynamic range</a><a id="Taming-the-dynamic-range-1"></a><a class="docs-heading-anchor-permalink" href="#Taming-the-dynamic-range" title="Permalink"></a></h2><p>The raw potential spans ~10³ over the box (deep wells, exp walls). We <strong>clip</strong> at a ceiling and <strong>z-score</strong> so the surface the GP sees is ~unit-scale — the standard surrogate-conditioning move for stiff potentials. We fix the lengthscale rather than refitting: at the scarce sample sizes here, marginal-likelihood fitting drives <code>ℓ</code> up and washes the wells out.</p><pre><code class="language-julia hljs">const CEIL = 200.0
+let g = grid_points(box; per_axis = 50), v = min.(mullerbrown.(g), CEIL)
+    global const _μ = mean(v); global const _σ = std(v)
+end
+mbt(p) = (min(mullerbrown(p), CEIL) - _μ) / _σ        ## clipped, z-scored — what we condition on
+
+const NOISE = 1.0e-3</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">0.001</code></pre><h2 id="A-custom-anisotropic-Matérn-kernel"><a class="docs-heading-anchor" href="#A-custom-anisotropic-Matérn-kernel">A custom anisotropic Matérn kernel</a><a id="A-custom-anisotropic-Matérn-kernel-1"></a><a class="docs-heading-anchor-permalink" href="#A-custom-anisotropic-Matérn-kernel" title="Permalink"></a></h2><p>The potential is rough and the reaction valley is narrow across the path but flat along it, so an anisotropic Matérn is the honest prior. Plain <code>MaternKernel</code> is non-differentiable at r=0, which breaks the gradient-variance term <a href="../../api/#Magpie.grad_predict"><code>grad_predict</code></a> needs (the squared distance hides a √); we sidestep it by evaluating the kernel in r² with a short Taylor branch near 0 (technique from CovarianceFunctions.jl, MIT-licensed). One lengthscale per input axis gives the anisotropy.</p><pre><code class="language-julia hljs">struct TaylorMatern32{V} &lt;: KF.Kernel
+    invℓ::V
+end
+function (k::TaylorMatern32)(x, y)
+    s = sum(abs2, (x .- y) .* k.invℓ)                       # r² = Σ ((xᵢ-yᵢ)/ℓᵢ)²
+    if s &lt; 1.0e-6
+        return 1 - 1.5 * s - 1.125 * s^2                    # Taylor of ψ(r²) near 0 (AD-smooth)
+    else
+        r = sqrt(s)
+        return (1 + sqrt(3) * r) * exp(-sqrt(3) * r)
+    end
+end
+
+mbkernel() = TaylorMatern32(1.0 ./ [0.35, 0.45])            # anisotropic feature scales (x, y)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">mbkernel (generic function with 1 method)</code></pre><h2 id="Finding-the-escape-transition-state-from-one-known-minimum"><a class="docs-heading-anchor" href="#Finding-the-escape-transition-state-from-one-known-minimum">Finding the escape transition state from one known minimum</a><a id="Finding-the-escape-transition-state-from-one-known-minimum-1"></a><a class="docs-heading-anchor-permalink" href="#Finding-the-escape-transition-state-from-one-known-minimum" title="Permalink"></a></h2><p>We know one stable state (<code>MC_min</code>, the deep right basin) and nothing else. To find the transition state leading out of it we climb the softest local mode (a gentlest-ascent / dimer walk) on the GP <em>mean</em>, evaluate the true potential where the walk predicts the saddle plus one <a href="../../api/#Magpie.GradStraddle"><code>GradStraddle</code></a> point to reduce gradient uncertainty along the way, re-condition, and repeat. The GP surrogate replaces the expensive inner force evaluations a classical dimer would need.</p><p>Each iteration: (1) compute the softest Hessian eigenvector at <code>MC_min</code> (the escape direction); (2) run <code>saddle_walk</code> in both signs of that direction and keep any index-1 result; (3) evaluate <code>mbt</code> at the predicted saddle and one <code>GradStraddle</code> point; (4) update the GP.</p><pre><code class="language-julia hljs">function escape_saddle(f, m0, kernel, box; budget = 14, noise = NOISE, rng = Random.default_rng())
+    pts = [clamp.(m0 .+ 0.08 .* randn(rng, 2), box.lb, box.ub) for _ in 1:5]
+    push!(pts, collect(float.(m0)))
+    g = update(ExactGP(kernel; noise = noise), pts, f.(pts))
+    hist = Tuple{Int, Vector{Float64}, Symbol}[]
+    res = (; x = collect(float.(m0)), H = zeros(2, 2))
+    for t in 1:budget
+        v = eigen(Symmetric(grad_predict(g, m0)[3])).vectors[:, 1]    # softest mode at the basin
+        # climb both signs on the surrogate; keep the branch that reaches an index-1 saddle
+        walks = [saddle_walk(g, clamp.(m0 .+ 0.2 .* s .* v, box.lb, box.ub); box = box) for s in (1.0, -1.0)]
+        saddles = filter(w -&gt; classify(w.H) == :saddle, walks)
+        res = isempty(saddles) ? argmin(w -&gt; w.residual, walks) : argmin(w -&gt; w.residual, saddles)
+        xacq = acquire(g, GradStraddle(β = 1.96); over = box)         ## explore high gradient-uncertainty
+        g = update(g, [res.x, xacq], f.([res.x, xacq]))
+        push!(hist, (length(pts) + 2t, copy(res.x), classify(res.H)))
+    end
+    return res, g, hist
+end
+
+Random.seed!(1)
+res, gfit, hist = escape_saddle(mbt, MC_min, mbkernel(), box; budget = 14)
+@info &quot;escape transition state&quot; predicted = round.(res.x; digits = 4) truth_S2 = S2 err = round(norm(res.x .- S2); digits = 4) kind = classify(res.H)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">┌ Info: escape transition state
+│   predicted = 2-element Vector{Float64}: …
+│   truth_S2 = 2-element Vector{Float64}: …
+│   err = 0.0154
+└   kind = :saddle</code></pre><h2 id="Landscape-and-the-climb"><a class="docs-heading-anchor" href="#Landscape-and-the-climb">Landscape and the climb</a><a id="Landscape-and-the-climb-1"></a><a class="docs-heading-anchor-permalink" href="#Landscape-and-the-climb" title="Permalink"></a></h2><p>The contour below shows the true potential with the sequence of saddle candidates the loop predicted at each iteration. Early iterations are scattered near <code>MC_min</code>; they converge toward <code>S2</code> as the surrogate fills in the reaction valley.</p><pre><code class="language-julia hljs">xc = range(-1.5, 1.0; length = 80); yc = range(-0.5, 2.0; length = 80)
+Zc = [Vclip([xi, yj]) for yj in yc, xi in xc]
+plt_climb = contourf(
+    xc, yc, Zc; levels = 18, c = :viridis, colorbar = false,
+    aspect_ratio = :equal, xlims = (-1.5, 1.0), ylims = (-0.5, 2.0),
+    xlabel = &quot;x&quot;, ylabel = &quot;y&quot;, title = &quot;saddle predictions (loop history)&quot;,
+    size = (520, 460)
+)
+pred_xs = [h[2][1] for h in hist]; pred_ys = [h[2][2] for h in hist]
+scatter!(plt_climb, pred_xs, pred_ys; ms = 5, mc = :white, msw = 0.5, label = &quot;predicted saddle&quot;)
+scatter!(plt_climb, [MC_min[1]], [MC_min[2]]; m = :star5, ms = 9, mc = :cyan, msw = 0.8, label = &quot;MC_min (start)&quot;)
+scatter!(plt_climb, [S2[1]], [S2[2]]; m = :star5, ms = 9, mc = :gold, msw = 0.8, label = &quot;true S2&quot;)
+scatter!(plt_climb, [res.x[1]], [res.x[2]]; m = :star5, ms = 10, mc = :red, msw = 0.8, label = &quot;final prediction&quot;)</code></pre><img src="cc797712.svg" alt="Example block output"/><h2 id="Surrogate-at-the-end-of-the-loop"><a class="docs-heading-anchor" href="#Surrogate-at-the-end-of-the-loop">Surrogate at the end of the loop</a><a id="Surrogate-at-the-end-of-the-loop-1"></a><a class="docs-heading-anchor-permalink" href="#Surrogate-at-the-end-of-the-loop" title="Permalink"></a></h2><p>After the loop the GP posterior mean already resolves the reaction valley from <code>MC_min</code> to <code>S2</code>. The evaluation sites (circles) trace the path the loop explored.</p><pre><code class="language-julia hljs">Zm = [predmean(gfit, [xi, yj]) for yj in yc, xi in xc]
+plt_surr = contourf(
+    xc, yc, Zm; levels = 18, c = :viridis, colorbar = false,
+    aspect_ratio = :equal, xlims = (-1.5, 1.0), ylims = (-0.5, 2.0),
+    xlabel = &quot;x&quot;, ylabel = &quot;y&quot;, title = &quot;GP posterior mean (end of loop)&quot;,
+    size = (520, 460)
+)
+scatter!(plt_surr, [S2[1]], [S2[2]]; m = :star5, ms = 9, mc = :gold, msw = 0.8, label = &quot;true S2&quot;)
+scatter!(plt_surr, [res.x[1]], [res.x[2]]; m = :star5, ms = 10, mc = :red, msw = 0.8, label = &quot;predicted saddle&quot;)
+
+plot(plt_climb, plt_surr; layout = (1, 2), size = (1040, 460))</code></pre><img src="3063a7f8.svg" alt="Example block output"/><h2 id="Correctness:-the-Hessian-diagnostic"><a class="docs-heading-anchor" href="#Correctness:-the-Hessian-diagnostic">Correctness: the Hessian diagnostic</a><a id="Correctness:-the-Hessian-diagnostic-1"></a><a class="docs-heading-anchor-permalink" href="#Correctness:-the-Hessian-diagnostic" title="Permalink"></a></h2><p>A first-order transition state has Morse index 1: one negative eigenvalue (the reaction coordinate) and one positive (the perpendicular stiffness). We confirm this at the located point via <a href="../../api/#Magpie.grad_predict"><code>grad_predict</code></a>.</p><pre><code class="language-julia hljs">λ = eigen(Symmetric(grad_predict(gfit, res.x)[3])).values
+@info &quot;Hessian eigenvalues at the located saddle&quot; λ = round.(λ; digits = 3) index = count(&lt;(0), λ)
+
+@assert classify(grad_predict(gfit, res.x)[3]) == :saddle                               #src located point is an index-1 saddle</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">┌ Info: Hessian eigenvalues at the located saddle
+│   λ =
+│    2-element Vector{Float64}:
+│     -9.324
+│     10.533
+└   index = 1</code></pre><h2 id="Convergence-vs-a-random-baseline"><a class="docs-heading-anchor" href="#Convergence-vs-a-random-baseline">Convergence vs a random baseline</a><a id="Convergence-vs-a-random-baseline-1"></a><a class="docs-heading-anchor-permalink" href="#Convergence-vs-a-random-baseline" title="Permalink"></a></h2><p>Localization error <code>‖predicted − S2‖</code> vs evaluation count from the loop&#39;s history, against a random-sampling baseline (uniform points in <code>box</code>, GP built with the same kernel, nearest index-1 saddle of the posterior mean to <code>S2</code>).</p><pre><code class="language-julia hljs">function random_nearest_saddle(f, kernel, box; T = 34, noise = NOISE, rng = Random.default_rng())
+    pts = [box.lb .+ (box.ub .- box.lb) .* rand(rng, 2) for _ in 1:T]
+    g = update(ExactGP(kernel; noise = noise), pts, f.(pts))
+    pol = [newton_polish(g, x; box = box, iters = 20) for x in grid_points(box; per_axis = 25)]
+    conv = filter(p -&gt; p.residual &lt; 1.0e-2, pol)
+    uniq = unique(p -&gt; round.(p.x; digits = 1), conv)
+    sad = [p.x for p in uniq if classify(p.H) == :saddle]
+    return isempty(sad) ? Inf : minimum(norm(s .- S2) for s in sad)
+end
+
+ns = [h[1] for h in hist]
+errs = [norm(h[2] .- S2) for h in hist]
+
+Random.seed!(42)
+rand_err = random_nearest_saddle(mbt, mbkernel(), box; T = ns[end])
+@info &quot;convergence comparison&quot; loop_final_err = round(errs[end]; digits = 4) random_err = round(rand_err; digits = 4)
+
+plt_conv = plot(
+    ns, errs; lw = 2, marker = :circle, mc = :steelblue, lc = :steelblue,
+    label = &quot;escape_saddle loop&quot;,
+    xlabel = &quot;true f-evaluations&quot;, ylabel = &quot;‖predicted − S2‖&quot;,
+    title = &quot;Transition-state localization error&quot;, size = (560, 380), legend = :topright
+)
+hline!(plt_conv, [rand_err]; lc = :darkorange, ls = :dash, lw = 2, label = &quot;random (nearest saddle, same budget)&quot;)
+hline!(plt_conv, [0.1]; lc = :gray, ls = :dot, lw = 1, label = &quot;0.1 threshold&quot;)</code></pre><img src="8629d610.svg" alt="Example block output"/><h2 id="Takeaway"><a class="docs-heading-anchor" href="#Takeaway">Takeaway</a><a id="Takeaway-1"></a><a class="docs-heading-anchor-permalink" href="#Takeaway" title="Permalink"></a></h2><p>The single-ended loop — climb the softest GP mode from <code>MC_min</code>, evaluate the true potential at the predicted saddle and a gradient-uncertainty point, repeat — locates <code>S2</code> in a few dozen true <code>f</code>-evaluations, well below the 0.1 localization threshold. The random baseline, with no notion of which saddle it is after, does not reliably find it at the same budget. The Hessian diagnostic (one negative eigenvalue) confirms the located point is a genuine first-order transition state.</p><p>The machinery is kernel-generic: swapping <code>TaylorMatern32</code> for any other kernel, or pointing <code>mbt</code> at a real DFT driver, gives the same loop on a real PES.</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../bald_classification/">« Decision boundary (BinaryBALD)</a><a class="docs-footer-nextpage" href="../volcano_terrain/">Volcano terrain: Morse critical points of a DEM »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 24 June 2026 01:50">Wednesday 24 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
