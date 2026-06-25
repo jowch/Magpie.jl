@@ -1,4 +1,10 @@
 using Test
+using LinearAlgebra
+# Pin single-threaded BLAS: GP-UDE training is multi-basin and ill-conditioned, so BLAS reduction
+# order (thread count, which differs across Julia/OpenBLAS builds) can tip the optimizer into a
+# different basin. Single-threaded removes that one axis; recovery/calibration gates are still
+# written as robust invariants (not BLAS-sensitive exact values). See CLAUDE.md roadmap follow-up.
+BLAS.set_num_threads(1)
 @testset "Magpie" begin
     include("test_spine.jl"); include("test_fit.jl"); include("test_ad.jl")
     include("test_acquisitions.jl"); include("test_laplace.jl")

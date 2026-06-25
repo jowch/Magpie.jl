@@ -97,9 +97,9 @@ end
     Z = kmeans_anchors(X, 6; rng = MersenneTwister(3))
     cf = CompositeField(known, ExactGPField(SqExponentialKernel(), Z; d = 1))
     ret = train!(
-        cf, (ts, X); shooting = MultipleShooting(nsegments = 3),
-        adam_iters = 300, maxiters = 80, λ = 1 / 16
-    )
+        cf, (ts, X); shooting = MultipleShooting(nsegments = 4),
+        adam_iters = 600, maxiters = 200, λ = 1 / 16
+    )                                                         # budget bumped: under-converged at 300/80
     @test ret === cf                                          # returns the field (Task 1 contract)
     res = predmean(posterior(cf)[1], [0.5])                   # reconstructed residual GP mean
     @test isfinite(res)

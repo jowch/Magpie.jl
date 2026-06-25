@@ -125,14 +125,29 @@ trained observation-noise log-std used by the Gaussian NLL data term, init `log(
 # Mooncake Cholesky-solve BACKWARD (potrs) doesn't hit SingularException when the optimizer explores
 # long lengthscales / near-duplicate anchors — `_chol(check=false)` only guards the forward. Verified:
 # 1e-2 removes the exception AND recovers LV better (sol_rmse 0.04 vs the fragile 1e-4).
+# Median-heuristic lengthscale init (Gretton et al.): ℓ₀ = median pairwise anchor distance. Opt in
+# via `logℓ0 = nothing` on the field constructor to start the optimizer on the DATA scale rather than
+# a fixed ℓ=1 (which can sit in / collapse to the wiggly small-ℓ overfit basin on some BLAS builds).
+# To also center the log-ℓ PRIOR there, pass `logℓ_ref = log(_median_lengthscale(Z))` to `train!`.
+# NOTE: this reduces, but does not eliminate, the multi-basin / BLAS sensitivity of GP-UDE training
+# (see CLAUDE.md roadmap follow-up). Falls back to 1 if anchors coincide.
+function _median_lengthscale(Z)
+    n = length(Z)
+    n < 2 && return 1.0
+    ds = [norm(collect(Z[i]) .- collect(Z[j])) for i in 1:n for j in (i + 1):n]
+    m = median(ds)
+    return m > 0 ? m : 1.0
+end
+
 function ExactGPField(
         kernel::Kernel, Z; d::Int = 1, mean = AbstractGPs.ZeroMean(),
         logℓ0 = 0.0, logσ0 = 0.0, logσ_obs0 = log(0.1), lognoise = log(1.0e-2)
     )
     n = length(Z)
+    ℓ0 = logℓ0 === nothing ? log(_median_lengthscale(Z)) : logℓ0   # logℓ0=nothing ⇒ data-driven (median heuristic)
     σobs0 = logσ_obs0 isa AbstractVector ? collect(float.(logσ_obs0)) : fill(float(logσ_obs0), d)
     @assert length(σobs0) == d "logσ_obs0 must be a scalar or length-d vector"
-    v0 = vcat(logℓ0, logσ0, σobs0, zeros(n * d))
+    v0 = vcat(ℓ0, logσ0, σobs0, zeros(n * d))
     return ExactGPField(AbstractGPs.GP(mean, kernel), collect(Z), n, d, Float64(lognoise), v0)
 end
 
@@ -223,12 +238,13 @@ function SVGPField(
         logℓ0 = 0.0, logσ0 = 0.0, logσ_obs0 = log(0.1), jitter = 1.0e-4
     )
     M = length(Z0); D = length(first(Z0))
+    ℓ0 = logℓ0 === nothing ? log(_median_lengthscale(Z0)) : logℓ0   # logℓ0=nothing ⇒ data-driven (median heuristic)
     σobs0 = logσ_obs0 isa AbstractVector ? collect(float.(logσ_obs0)) : fill(float(logσ_obs0), dout)
     @assert length(σobs0) == dout "logσ_obs0 must be a scalar or length-dout vector"
     μ0 = zeros(M * dout)
     # diag raw=0 ⇒ exp=1 ⇒ S=I, KL=0; off-diag raw=0 as well
     Ls0 = reduce(vcat, [vcat(zeros(M), zeros(nLS(M) - M)) for _ in 1:dout])
-    v0 = vcat(logℓ0, logσ0, σobs0, reduce(vcat, Z0), μ0, Ls0)
+    v0 = vcat(ℓ0, logσ0, σobs0, reduce(vcat, Z0), μ0, Ls0)
     return SVGPField(AbstractGPs.GP(mean, kernel), collect(Z0), M, dout, D, Float64(jitter), v0)
 end
 
