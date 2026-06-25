@@ -80,8 +80,8 @@ end
     field = ExactGPField(Magpie._kernel(0.0, 0.0), Z; d = 1)
     train!(field, (ts, X); shooting = MultipleShooting(nsegments = 4), adam_iters = 300, maxiters = 80)
     @test all(isfinite, field.v0)
-    gps = posterior(field)
-    μs, _ = propagate(gps, u0, tspan; method = PULL(), ts = ts)
+    g = posterior(field)
+    μs, _ = propagate(g, u0, tspan; method = PULL(), ts = ts)
     rmse = sqrt(mean(sum(abs2, μs[k] .- X[:, k]) for k in 1:length(ts)))
     @info "train!→MS e2e" rmse
     @test rmse < 0.5                                  # MS training recovers the trajectory
@@ -101,7 +101,7 @@ end
         adam_iters = 600, maxiters = 200, λ = 1 / 16
     )                                                         # budget bumped: under-converged at 300/80
     @test ret === cf                                          # returns the field (Task 1 contract)
-    res = predmean(posterior(cf)[1], [0.5])                   # reconstructed residual GP mean
+    res = predmean(posterior(cf), [0.5])                      # reconstructed residual GP mean
     @test isfinite(res)
     @test abs(res - 0.3) < 0.25                               # recovers the +0.3 residual, not 0
 end

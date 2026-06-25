@@ -82,13 +82,12 @@ end
     xs_train = [[x] for x in range(0.0, 2π; length = 30)]
     ys_train = [sin(x[1]) for x in xs_train]
 
-    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6)
+    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6)   # single-output (d=1) multi-output GP
     g = update(g, xs_train, ys_train)
 
-    gps = [g]   # one GP per output dim (d=1)
     test_pts = [[x] for x in range(0.0, 2π; length = 15)]
 
-    fe = field_error(gps, truefield, test_pts)
+    fe = field_error(g, truefield, test_pts)
 
     @test haskey(NamedTuple(pairs(fe)), :median)
     @test haskey(NamedTuple(pairs(fe)), :q90)
@@ -99,10 +98,10 @@ end
 @testset "field_error: median/q90 match StatsBase on a known error set" begin
     # The dense-fit test above leaves median≈q90≈0, so a wrong quantile probability would pass
     # there. Pin the q90 VALUE: a no-data GP predicts 0, so the error at z is ‖truefield(z)‖.
-    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6)   # no `update` → predmean ≡ 0
+    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6)   # no `update` → mean ≡ 0
     truefield(z) = [z[1]]                                 # error at z = |0 − z[1]| = |z[1]|
     pts = [[x] for x in 1.0:10.0]                          # per-point errors = 1, 2, …, 10
-    fe = field_error([g], truefield, pts)
+    fe = field_error(g, truefield, pts)
     expected = collect(1.0:10.0)
     @test fe.median ≈ median(expected)                    # = 5.5
     @test fe.q90 ≈ quantile(expected, 0.9)                # matches the exact StatsBase rule the code uses
@@ -121,13 +120,11 @@ end
     traj_pred = copy(traj_truth)
 
     truefield(u) = [0.0, 0.0]
-    # A trivial GP: ExactGP with no data — predmean returns prior mean (0)
-    g0 = ExactGP(SqExponentialKernel(); noise = 1.0e-6)
-    g1 = ExactGP(SqExponentialKernel(); noise = 1.0e-6)
-    gps = [g0, g1]
+    # A trivial GP: one multi-output (d=2) ExactGP with no data — mean returns prior mean (0)
+    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6, d = 2)
 
     offpts = [randn(d) for _ in 1:20]
-    rm = recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts = offpts)
+    rm = recovery_metrics(g, truefield, traj_pred, traj_truth; offpts = offpts)
 
     @test rm.traj_rmse ≈ 0.0 atol = 1.0e-12
     @test haskey(NamedTuple(pairs(rm)), :field_err_visited)
@@ -137,7 +134,7 @@ end
     @test haskey(NamedTuple(pairs(rm.field_err_offmanifold)), :q90)
 
     # With offpts=nothing, offmanifold is (NaN, NaN)
-    rm2 = recovery_metrics(gps, truefield, traj_pred, traj_truth)
+    rm2 = recovery_metrics(g, truefield, traj_pred, traj_truth)
     @test isnan(rm2.field_err_offmanifold.median)
     @test isnan(rm2.field_err_offmanifold.q90)
 end
@@ -151,11 +148,10 @@ end
     traj_truth = [[0.0, 0.0], [3.0, 4.0]]
     expected = sqrt(13.0)
 
-    # recovery_metrics needs gps + truefield; use trivial stubs (RMSE is pure)
-    g0 = ExactGP(SqExponentialKernel(); noise = 1.0e-6)
-    g1 = ExactGP(SqExponentialKernel(); noise = 1.0e-6)
+    # recovery_metrics needs a GP + truefield; use a trivial multi-output stub (RMSE is pure)
+    g = ExactGP(SqExponentialKernel(); noise = 1.0e-6, d = 2)
     truefield(u) = [0.0, 0.0]
-    rm = recovery_metrics([g0, g1], truefield, traj_pred, traj_truth)
+    rm = recovery_metrics(g, truefield, traj_pred, traj_truth)
 
     @test rm.traj_rmse ≈ expected
 end

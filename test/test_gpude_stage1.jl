@@ -14,8 +14,8 @@ import Mooncake
     lossT = ext.make_loss(field, u0, tspan, ts, target)(field.v0)
     @info "train!" loss0 lossT
     @test lossT < loss0                                   # training reduced the loss
-    gps = Magpie.posterior(field)   # PUBLIC path — guards the qualified-extension fix
+    g = Magpie.posterior(field)   # PUBLIC path — guards the qualified-extension fix
     vopt = field.v0
     pf = vcat(vopt[1], vopt[2], vec(Magpie.solve_alpha(field, vopt[1], vopt[2], field.lognoise, Magpie.wmat(Magpie.FieldLayout(10, 1), vopt))))
-    @test Magpie.predmean(gps[1], [0.5]) ≈ Magpie.gpfield(field, [0.5], pf)[1] rtol = 1.0e-8
+    @test Magpie.predmean(g, [0.5]) ≈ Magpie.gpfield(field, [0.5], pf)[1] rtol = 1.0e-8
 end

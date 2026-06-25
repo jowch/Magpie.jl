@@ -116,11 +116,11 @@ _train_seed(seed, logℓ0) = begin
     f = ExactGPField(SqExponentialKernel(), Z; d = 2, logℓ0 = logℓ0)
     train!(f, (ts, Xnoisy); tspan, maxiters = 150, λ = 1.0e-4, s = 0.5)
     # Trajectory RMSE: integrate GP mean field vs clean truth (same metric as the LV example).
-    gps = posterior(f)
-    gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
+    g = posterior(f)
+    gp_rhs!(du, u, p, t) = (du .= vec(mean(g, [u])); nothing)
     sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
     traj_rmse = sqrt(sum(abs2, sol_gp .- target) / length(target))
-    (v = f.v0, gps = gps, traj_rmse = traj_rmse)
+    (v = f.v0, gps = g, traj_rmse = traj_rmse)
 end
 
 @info "Training 3 seeds (weak regulariser)..."

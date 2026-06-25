@@ -74,7 +74,7 @@ train!(field, (ts, Xnoisy); tspan, maxiters = 150, λ = 1 / (15 * 2), s = 0.5)
 
 # ## Posterior GPs
 
-gps = posterior(field)
+g = posterior(field)   # ONE multi-output GP (d=2); mean(g, [u]) → length-2 field
 
 # ## 1. Trajectory RMSE — ODE integration of the GP mean field vs clean truth
 #
@@ -83,7 +83,7 @@ gps = posterior(field)
 # the GP posterior mean field as a proper ODE (same as what training minimises),
 # then compare against the clean truth.
 
-gp_rhs!(du, u, p, t) = (du .= [predmean(gps[i], u) for i in 1:2]; nothing)
+gp_rhs!(du, u, p, t) = (du .= vec(mean(g, [u])); nothing)
 sol_gp = Array(solve(ODEProblem(gp_rhs!, u0, tspan), Tsit5(); saveat = ts))
 
 traj_pred = [sol_gp[:, i] for i in 1:length(ts)]
@@ -94,7 +94,7 @@ prey_grid = range(0.3, 2.5; length = 10)
 pred_grid = range(0.3, 3.5; length = 10)
 offpts = vec([[p1, p2] for p1 in prey_grid, p2 in pred_grid])
 
-metrics = recovery_metrics(gps, lv_true, traj_pred, traj_truth; offpts = offpts)
+metrics = recovery_metrics(g, lv_true, traj_pred, traj_truth; offpts = offpts)
 
 @info "Trajectory RMSE (ODE integration of GP mean vs clean truth)" metrics.traj_rmse
 @info "Field error (on-trajectory)"  metrics.field_err_visited.median  metrics.field_err_visited.q90
@@ -130,7 +130,7 @@ truth_vecs = [target_test[:, i] for i in 1:length(ts_test)]
 # PULL's mean is a first-order Euler recurrence; on the LV limit cycle it drifts
 # from the true trajectory, so coverage collapses to ~0. Kept as a documented
 # contrast, NOT as the validated-uncertainty story.
-μs_test, Σs_test = propagate(gps, u0_test, tspan; method = PULL(), ts = ts_test)
+μs_test, Σs_test = propagate(g, u0_test, tspan; method = PULL(), ts = ts_test)
 cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level = 0.9)
 
 @info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
@@ -140,7 +140,7 @@ cov90_pull = coverage(truth_vecs, μs_test, Σs_test; level = 0.9)
 # Each of `n` samples is a decoupled GP draw integrated as a proper ODE, so the
 # ensemble carries the field's uncertainty *without* PULL's Euler drift.
 # `propagate(...; method=Pathwise(n=N))` returns an `N × d × |ts|` array.
-ens = propagate(gps, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
+ens = propagate(g, u0_test, tspan; method = Pathwise(n = 128), ts = ts_test)
 
 # Per-step empirical mean + covariance from the ensemble, then reuse the same
 # Mahalanobis-χ² `coverage` as PULL (apples-to-apples at 90% nominal).
@@ -186,7 +186,7 @@ using Test  #src
 # different OpenBLAS can land a poorer basin; see CLAUDE.md roadmap). So these anti-rot gates assert
 # API/STRUCTURAL invariants that hold on ANY backend (catch shape/dispatch regressions), not exact
 # recovery values — the recovery numbers are reported via @info and shown in the rendered docs.   #src
-@test length(gps) == 2 && all(g -> isfinite(predmean(g, u0)), gps)   #src  posterior → callable per-output GPs
+@test g.d == 2 && all(isfinite, vec(mean(g, [u0])))   #src  posterior → one multi-output GP, finite mean field
 @test size(sol_gp) == size(target) && all(isfinite, sol_gp)          #src  field integrates to a finite trajectory
 @test all(isfinite, (metrics.traj_rmse, metrics.field_err_visited.median, metrics.field_err_offmanifold.median))  #src
 @test metrics.traj_rmse < 3.0   #src  loose sanity — not a total blow-up (the field tracks, even if a basin is suboptimal)

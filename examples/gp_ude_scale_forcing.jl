@@ -122,7 +122,7 @@ train!(field, trajs; tspan, nsamples = 8, adam_iters = 400, maxiters = 200, λ =
 # of this example are (1) the ON/OFF contrast — SVGP does not generalise past its support —
 # and (2) the MEASURED O(M³)-vs-O(N³) scaling advantage (see the bench reference above).
 
-sgps = posterior(field)
+g = posterior(field)
 
 # On-support test points: subsample from pooled training states (every 5th column).
 on_pts = [allstates[:, j] for j in 1:5:size(allstates, 2)]
@@ -134,8 +134,8 @@ prey_offgrid = range(3.0, 5.0; length = 10)
 pred_offgrid = range(3.0, 5.0; length = 10)
 off_pts = vec([[p1, p2] for p1 in prey_offgrid, p2 in pred_offgrid])
 
-ferr_on = field_error(sgps, lv_true, on_pts)
-ferr_off = field_error(sgps, lv_true, off_pts)
+ferr_on = field_error(g, lv_true, on_pts)
+ferr_off = field_error(g, lv_true, off_pts)
 
 @info "Field recovery ON-support (training manifold)"   median = ferr_on.median  q90 = ferr_on.q90
 @info "Field recovery OFF-manifold (outside training support)" median = ferr_off.median q90 = ferr_off.q90
@@ -145,7 +145,7 @@ ferr_off = field_error(sgps, lv_true, off_pts)
 # We integrate the posterior mean field as a proper ODE (not PULL's Euler recurrence)
 # and compare against the CLEAN ground truth from the first training IC.
 
-gp_rhs!(du, u, p, t) = (du .= [predmean(sgps[i], u) for i in 1:2]; nothing)
+gp_rhs!(du, u, p, t) = (du .= vec(mean(g, [u])); nothing)
 ic0_clean = ICs[1]
 sol_gp = Array(solve(ODEProblem(gp_rhs!, ic0_clean, tspan), Tsit5(); saveat = ts))
 
@@ -180,7 +180,7 @@ truth_vecs = [target_test[:, i] for i in 1:length(ts)]
 # PULL's mean is a first-order Euler recurrence; on the LV limit cycle it drifts
 # from the true trajectory, so coverage collapses to ~0. Kept as a documented
 # contrast, NOT as the validated-uncertainty story.
-μs_pull, Σs_pull = propagate(sgps, u0_test, tspan; method = PULL(), ts = ts)
+μs_pull, Σs_pull = propagate(g, u0_test, tspan; method = PULL(), ts = ts)
 cov90_pull = coverage(truth_vecs, μs_pull, Σs_pull; level = 0.9)
 @info "Held-out-IC PULL coverage at 90% nominal (Euler-limited)" cov90_pull
 
@@ -188,7 +188,7 @@ cov90_pull = coverage(truth_vecs, μs_pull, Σs_pull; level = 0.9)
 #
 # Each of `n` SVGP samples is drawn from the whitened variational posterior and
 # integrated as a proper ODE (no Euler drift).
-ens = propagate(sgps, u0_test, tspan; method = Pathwise(n = 128), ts = ts)
+ens = propagate(g, u0_test, tspan; method = Pathwise(n = 128), ts = ts)
 
 nsteps = length(ts)
 μs_path, Σs_path = pathwise_moments(ens)

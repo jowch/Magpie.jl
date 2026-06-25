@@ -61,21 +61,19 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    field_error(gps, truefield, pts) -> NamedTuple{(:median, :q90)}
+    field_error(g, truefield, pts) -> NamedTuple{(:median, :q90)}
 
-Median and 90th-percentile of `‖[predmean(g,z) for g in gps] − truefield(z)‖₂`
-over `pts` (a vector of states).
+Median and 90th-percentile of `‖mean(g, [z]) − truefield(z)‖₂` over `pts` (a vector of states).
 
-`gps`       — `Vector{<:AbstractGPModel}`, one GP per output dimension.
-              `predmean(gps[j], z)` gives the posterior mean for dimension `j` at `z`.
+`g`         — a multi-output GP posterior (`mean(g, [z])` returns the length-`d` posterior mean field).
 `truefield` — callable `z -> AbstractVector` returning the true RHS at state `z`.
-`pts`       — `AbstractVector` of states (each state is whatever `predmean` accepts).
+`pts`       — `AbstractVector` of states (each state is whatever `mean` accepts).
 
 Returns `(median=…, q90=…)` as a `NamedTuple`.
 """
-function field_error(gps, truefield, pts::AbstractVector)
+function field_error(g, truefield, pts::AbstractVector)
     errs = map(pts) do z
-        pred = [predmean(g, z) for g in gps]
+        pred = vec(mean(g, [z]))           # length-d posterior mean field at z
         true_ = truefield(z)
         norm(pred .- true_)
     end
@@ -108,16 +106,16 @@ Combine trajectory RMSE and field errors into one NamedTuple.  Pure — no solve
 
 Caller must pre-integrate the trajectory (no solver is built here).
 """
-function recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts = nothing)
+function recovery_metrics(g, truefield, traj_pred, traj_truth; offpts = nothing)
     # Trajectory RMSE — pure, caller supplies both trajectories
     traj_rmse = sqrt(mean(sum(abs2, p .- t) for (p, t) in zip(traj_pred, traj_truth)))
 
     # Field error at visited (on-trajectory) points
-    fe_vis = field_error(gps, truefield, traj_truth)
+    fe_vis = field_error(g, truefield, traj_truth)
 
     # Field error at off-manifold points (optional)
     fe_off = if offpts !== nothing
-        field_error(gps, truefield, offpts)
+        field_error(g, truefield, offpts)
     else
         (median = NaN, q90 = NaN)
     end

@@ -7,7 +7,7 @@ Protocol root for the Capability B GP-UDE fields. Every concrete field implement
 
   - `unpack(field, v) -> NamedTuple` — flat trained vector → named params (pure layout).
   - `regularizer(field, v; kw...) -> Real` — priors (+ KL for SVGP); pure, no solver.
-  - `posterior(field, v) -> Vector{<:AbstractGPModel}` — solver-free reconstruction (ext).
+  - `posterior(field, v) -> AbstractGPModel` — solver-free reconstruction of the multi-output posterior (ext).
   - `field_rhs(field, v) -> Function` — the in-loss α/Cholesky + `du += f(u)` closure (ext).
 
 The shooting strategy (`SingleShooting`/`MultipleShooting`) is orthogonal to field type;
@@ -56,13 +56,20 @@ struct ExactGPField{Tp, TZ} <: GPField
     v0::Vector{Float64}   # initial flat TRAINED params [logℓ, logσ, logσ_obs, vec(w)] — lognoise is NOT trained here
 end
 
-"""Sparse variational GP as a full spine `AbstractGPModel` (per interface-design). Stores enough to
-serve the whole AbstractGP contract via the whitened moments: `α = L_ZZ'\\μ` (predmean), plus the
-inducing Cholesky `L_ZZ` and the variational factor `L_S` (var/cov — needed by SVGP PULL uncertainty).
-mean/var/cov methods are defined below via `svgp_moments`."""
+"""Sparse variational GP implementing the full `AbstractGPModel` contract through the whitened SVGP
+moments. For `d` outputs (shared inducing points `Z` and kernel) it caches `α = L_ZZ'\\μ` — the `M×d`
+predictive-mean weights — the inducing Cholesky `L_ZZ`, and the variational factor `L_S` (one per
+output, since each output keeps its own variational covariance). `mean`/`var`/`cov` are defined below
+via `svgp_moments`: `mean` and `var` return a length-`nx` vector for `d=1` and an `nx×d` matrix for
+`d>1`; cross-covariance is per-output (`svgp_output_cov`)."""
 struct SparseGP{Tp, TZ, Tα, TL, TS} <: AbstractGPModel
-    prior::Tp; Z::TZ; α::Tα; L_ZZ::TL; L_S::TS
+    prior::Tp; Z::TZ; α::Tα; L_ZZ::TL; L_S::TS; d::Int
 end
+# `d` follows the weight/factor shapes, so a single-output GP needs no explicit `d`:
+#   vector α  (+ a single L_S)          ⇒ d = 1          (single-output)
+#   matrix α (M×d) (+ a Vector of L_S)  ⇒ d = #outputs   (multi-output)
+SparseGP(prior, Z, α::AbstractVector, L_ZZ, L_S) = SparseGP(prior, Z, α, L_ZZ, L_S, 1)
+SparseGP(prior, Z, α::AbstractMatrix, L_ZZ, L_S::AbstractVector) = SparseGP(prior, Z, α, L_ZZ, L_S, size(α, 2))
 
 "Flat-Vector layout helper for Stage-1/2 trained params `[logℓ, logσ, logσ_obs, vec(w)]` (lognoise is fixed on the field)."
 struct FieldLayout
@@ -154,8 +161,8 @@ end
 """Output-scaled squared-exponential kernel: `exp(2logσ) * SE(exp(logℓ))`."""
 _kernel(logℓ, logσ) = exp(2logσ) * with_lengthscale(SqExponentialKernel(), exp(logℓ))
 
-# (`_lengthscale(::ScaledKernel)` lives in fit.jl — PR #2's family already peels our field kernel's
-# ScaledKernel→TransformedKernel→ScaleTransform to recover ℓ, so no separate definition is needed here.)
+# `_lengthscale(::ScaledKernel)` lives in fit.jl: it peels a ScaledKernel→TransformedKernel→ScaleTransform
+# to recover ℓ — exactly our field kernel's shape — so no definition is needed here.
 
 # Layout accessors — trained vector is [logℓ, logσ, logσ_obs, vec(w)]; lognoise lives on the field.
 nw(L::FieldLayout) = L.n * L.d
@@ -414,32 +421,45 @@ function SparseGP(prior, Z, μ::AbstractVector, L_S; jitter = 1.0e-4)
     return SparseGP(prior, Z, L_ZZ' \ μ, L_ZZ, L_S)
 end
 
-"""Posterior mean at a single input `u` (scalar)."""
-predmean(g::SparseGP, u) = svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, u)[1]
-
-"""Posterior mean vector at `xs`."""
-Statistics.mean(g::SparseGP, xs::AbstractVector) = [predmean(g, x) for x in xs]
-
-"""Posterior marginal variance vector at `xs`."""
-Statistics.var(g::SparseGP, xs::AbstractVector) =
-    [svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, x)[2] for x in xs]
-
-"""
-    cov(g::SparseGP, xs, ys) -> Matrix
-
-Posterior cross-covariance between input sets `xs` and `ys`, including the
-variational correction from `L_S`.
-
-    Ax = L_ZZ \\ K(Z, xs),   Ay = L_ZZ \\ K(Z, ys)
-    Cov = K(xs, ys) - Ax' Ay + (L_S' Ax)' (L_S' Ay)
-"""
-function Statistics.cov(g::SparseGP, xs::AbstractVector, ys::AbstractVector)
-    Ax = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, xs)   # M × |xs|
-    Ay = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, ys)   # M × |ys|
-    return AbstractGPs.cov(g.prior, xs, ys) .- Ax'Ay .+ (g.L_S'Ax)' * (g.L_S'Ay)
+"""Posterior mean at a single input `u` (scalar). Single-output (`d=1`) only — `d>1` throws."""
+function predmean(g::SparseGP, u)
+    g.d == 1 ||
+        throw(ArgumentError("predmean returns a scalar but this SparseGP has d=$(g.d) outputs; use mean(g, [u]) for the length-d vector"))
+    return svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, u)[1]
 end
 
-"""Posterior covariance matrix within `xs` (symmetric)."""
+"""Posterior mean at `xs`: a length-`nx` vector for `d=1`, an `nx×d` matrix for `d>1` (one column per output)."""
+function Statistics.mean(g::SparseGP, xs::AbstractVector)
+    g.d == 1 && return [predmean(g, x) for x in xs]
+    return [svgp_moments(g.prior, g.Z, g.L_ZZ, g.α[:, i], g.L_S[i], x)[1] for x in xs, i in 1:g.d]   # nx×d
+end
+
+"""Posterior marginal variance at `xs`: length-`nx` for `d=1`, `nx×d` for `d>1` (per-output — each uses its own `L_S`)."""
+function Statistics.var(g::SparseGP, xs::AbstractVector)
+    g.d == 1 && return [svgp_moments(g.prior, g.Z, g.L_ZZ, g.α, g.L_S, x)[2] for x in xs]
+    return [svgp_moments(g.prior, g.Z, g.L_ZZ, g.α[:, i], g.L_S[i], x)[2] for x in xs, i in 1:g.d]   # nx×d
+end
+
+"""
+    svgp_output_cov(g::SparseGP, k, xs, ys) -> Matrix
+
+Posterior cross-covariance of OUTPUT `k` between input sets `xs` and `ys`, including the
+variational correction from that output's `L_S`.
+
+    Ax = L_ZZ \\ K(Z, xs),   Ay = L_ZZ \\ K(Z, ys)
+    Cov_k = K(xs, ys) - Ax' Ay + (L_S_k' Ax)' (L_S_k' Ay)
+"""
+function svgp_output_cov(g::SparseGP, k::Int, xs::AbstractVector, ys::AbstractVector)
+    L_S_k = g.d == 1 ? g.L_S : g.L_S[k]
+    Ax = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, xs)   # M × |xs|
+    Ay = g.L_ZZ \ AbstractGPs.cov(g.prior, g.Z, ys)   # M × |ys|
+    return AbstractGPs.cov(g.prior, xs, ys) .- Ax'Ay .+ (L_S_k'Ax)' * (L_S_k'Ay)
+end
+
+"""Posterior cross-covariance between `xs` and `ys` (single-output `d=1`; for `d>1` use [`svgp_output_cov`](@ref) per output)."""
+Statistics.cov(g::SparseGP, xs::AbstractVector, ys::AbstractVector) = svgp_output_cov(g, 1, xs, ys)
+
+"""Posterior covariance matrix within `xs` (symmetric; single-output)."""
 Statistics.cov(g::SparseGP, xs::AbstractVector) = Matrix(Symmetric(Statistics.cov(g, xs, xs)))
 
 # ---------------------------------------------------------------------------

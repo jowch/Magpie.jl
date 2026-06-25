@@ -40,7 +40,7 @@ end
     lossT = ext.make_loss(field, u0, tspan, ts, target; λ = 0.0, λσ = 0.0)(field.v0)
     @info "B-smoke" loss0 lossT
     @test lossT < loss0                               # train! actually descended (optimizer-driver wiring works)
-    gps = Magpie.posterior(field)
-    @test length(gps) == 1                            # posterior reconstruction works
-    @test isfinite(Magpie.predmean(gps[1], [0.5]))    # reconstructed field is callable
+    g = Magpie.posterior(field)
+    @test g.d == 1                                    # posterior reconstruction works
+    @test isfinite(Magpie.predmean(g, [0.5]))         # reconstructed field is callable
 end

@@ -14,7 +14,7 @@ function _nonlinear_field()
     ys = [-x + 0.5 * x^2 for x in xs]
     k = Magpie._kernel(log(0.8), 0.0)
     gp = update(ExactGP(k; noise = 1.0e-6), Z, ys)
-    return [gp]   # 1-output field (d=1)
+    return gp   # 1-output field (d=1)
 end
 
 # Brute-force Dₙ reference (no shared code with pull_propagate's telescope):
@@ -25,7 +25,7 @@ end
 #
 # Implementation: forward pass collects allμ[j]=μ_{j-1} (BEFORE Euler, 1-indexed) and
 # allA[j]=A at state j-1. For step n, μ_current = allμ[n] and past states = allμ[1..n-1].
-function _bruteforce_Dn(gps, u0, ts; buffer = length(ts))
+function _bruteforce_Dn(g, u0, ts; buffer = length(ts))
     d = length(u0)
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
     # Forward pass: collect all pre-Euler mean states and Jacobian factors.
@@ -35,9 +35,9 @@ function _bruteforce_Dn(gps, u0, ts; buffer = length(ts))
     for n in 1:(length(ts) - 1)
         h = ts[n + 1] - ts[n]
         push!(allμ_pre, copy(μ))           # pre-Euler state at iteration n
-        A = Matrix(I + h .* ext.pull_jacobian(gps, μ))
+        A = Matrix(I + h .* ext.pull_jacobian(g, μ))
         push!(allA, A)
-        μ = μ + h .* ext.field_mean(gps, μ)
+        μ = μ + h .* ext.field_mean(g, μ)
     end
     # Compute Dₙ for each step n (1..N-1).
     # At iteration n: current mean = allμ_pre[n] (before Euler), past states = allμ_pre[1..n-1].
@@ -59,7 +59,7 @@ function _bruteforce_Dn(gps, u0, ts; buffer = length(ts))
         Dn = zeros(d, d)
         prodA = Matrix{Float64}(I, d, d)
         for i in npast:-1:lo_b     # i (1-indexed): allμ_pre[i] = μ_{i-1} (0-indexed past state)
-            covf = Diagonal([only(AbstractGPs.cov(gps[k2], [allμ_pre[i]], [μ_cur])) for k2 in 1:d])
+            covf = Diagonal([only(AbstractGPs.cov(g, [allμ_pre[i]], [μ_cur])) for _ in 1:d])
             Dn += prodA * covf
             if i > lo_b
                 # Advance product: step to earlier past state adds A at that state = allA[i]
@@ -102,10 +102,10 @@ end
     # A_n varies along the trajectory. Asserts per-step Dₙ from the telescope matches
     # a brute-force reference built independently from the definition.
     ext = Base.get_extension(Magpie, :MagpieSciMLExt)
-    gps = _nonlinear_field()          # f(x) ≈ -x + 0.5x² (nonlinear → A_n varies)
+    g = _nonlinear_field()          # f(x) ≈ -x + 0.5x² (nonlinear → A_n varies)
     u0 = [1.5]; ts = collect(range(0, 3; length = 31))
-    Dns = ext._pull_Dn_sequence(gps, u0, ts; buffer = length(ts))
-    Dref = _bruteforce_Dn(gps, u0, ts)
+    Dns = ext._pull_Dn_sequence(g, u0, ts; buffer = length(ts))
+    Dref = _bruteforce_Dn(g, u0, ts)
     @test length(Dns) == length(Dref)
     max_err = maximum(norm(Dns[n] - Dref[n]) for n in eachindex(Dref))
     @test max_err < 1.0e-9
@@ -113,8 +113,8 @@ end
     # This pins both index bugs simultaneously: a self-term (i=n) would add cov_f(μ_n,μ_n)=σ²(μ_n)
     # instead of cov_f(μ_{n-1},μ_n), and histA[i-1] would inject an extra A factor.
     h = ts[2] - ts[1]
-    μ1 = u0 .+ h .* ext.field_mean(gps, u0)
-    D2_expected = h .* Matrix(Diagonal([only(AbstractGPs.cov(gps[1], [u0], [μ1]))]))
+    μ1 = u0 .+ h .* ext.field_mean(g, u0)
+    D2_expected = h .* Matrix(Diagonal([only(AbstractGPs.cov(g, [u0], [μ1]))]))
     @test norm(Dns[2] - D2_expected) < 1.0e-12
     @info "PULL Dn oracle" max_err D2_err = norm(Dns[2] - D2_expected)
 
@@ -123,8 +123,8 @@ end
     # are dropped and the retained near-past window must still telescope correctly — guards the
     # `lo = max(1, npast-buffer+1)` bound and the `i > lo` prodA-advance off-by-one.
     for k in (1, 3, 7)
-        Dns_k = ext._pull_Dn_sequence(gps, u0, ts; buffer = k)
-        Dref_k = _bruteforce_Dn(gps, u0, ts; buffer = k)
+        Dns_k = ext._pull_Dn_sequence(g, u0, ts; buffer = k)
+        Dref_k = _bruteforce_Dn(g, u0, ts; buffer = k)
         @test maximum(norm(Dns_k[n] - Dref_k[n]) for n in eachindex(Dref_k)) < 1.0e-9
     end
 end
@@ -136,9 +136,9 @@ end
     gp = update(ExactGP(Magpie._kernel(log(0.8), 0.0); noise = 1.0e-3), Z, a .* first.(Z))
     u0 = [1.0]; ts = collect(range(0, 2.0; length = 11))
     # buffer=20: FULL coherent recurrence including the cross-cov Dₙ term (the "past does matter" term)
-    μs, Σs = ext.pull_propagate([gp], u0, ts; buffer = 20)
+    μs, Σs = ext.pull_propagate(gp, u0, ts; buffer = 20)
     # buffer=0: Dₙ dropped — must UNDERESTIMATE Σ (the load-bearing canary)
-    μs0, Σs0 = ext.pull_propagate([gp], u0, ts; buffer = 0)
+    μs0, Σs0 = ext.pull_propagate(gp, u0, ts; buffer = 0)
     β = only(var(gp, [0.0]))
     @assert β > 1.0e-4 "β vacuous — the oracle/canary would be meaningless"
     # PULL paper (arXiv:2211.11103) eq 21b — coherent linear-field flow for du/dt = a·u, Σ_0=0:
@@ -170,8 +170,8 @@ end
     a = -0.6; Z = [[x] for x in range(-3, 3; length = 12)]
     gp = Magpie.update(Magpie.ExactGP(Magpie._kernel(log(0.8), 0.0); noise = 1.0e-3), Z, a .* first.(Z))
     u0 = [1.0]; tspan = (0.0, 2.0); ts = collect(range(tspan...; length = 11))
-    _, Σpull = propagate([gp], u0, tspan; method = PULL(), ts = ts)
-    ens = propagate([gp], u0, tspan; method = Pathwise(n = 800), ts = ts)   # n_samples × d × n_times
+    _, Σpull = propagate(gp, u0, tspan; method = PULL(), ts = ts)
+    ens = propagate(gp, u0, tspan; method = Pathwise(n = 800), ts = ts)   # n_samples × d × n_times
     mc_var = [var(ens[:, 1, j]) for j in 1:length(ts)]
     rel(j) = abs(Σpull[j][1, 1] - mc_var[j]) / max(mc_var[j], 1.0e-12)
     rel_end = rel(length(ts))                                          # converged-regime agreement

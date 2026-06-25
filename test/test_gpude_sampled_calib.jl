@@ -55,9 +55,9 @@ end
     cf = CompositeField(known, SVGPField(SqExponentialKernel(), kmeans_anchors(X, 6; rng = MersenneTwister(3)); dout = 1))
     ret = train!(cf, (ts, X); nsamples = 8, adam_iters = 300, maxiters = 80)
     @test ret === cf                                  # guard removed; returns the field
-    gps = posterior(cf)
-    @test gps[1] isa Magpie.SparseGP                  # posterior returns SparseGPs
-    res = predmean(gps[1], [0.5])
+    g = posterior(cf)
+    @test g isa Magpie.SparseGP                       # posterior returns ONE multi-output SparseGP
+    res = predmean(g, [0.5])
     @test isfinite(res)
     @test abs(res - 0.3) < 0.3                         # recovers the +0.3 residual (not 0)
     ens = propagate(cf, u0, tspan; method = Pathwise(64), ts = ts)   # SparseGP composite dispatch

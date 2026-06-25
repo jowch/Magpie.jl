@@ -28,11 +28,11 @@ fhn_residual_true(u) = [-u[1]^3 / 3, 0.0]
 
 # ---------------------------------------------------------------------------
 # Helper: inline field_error at a set of state points.
-# field_error = median over pts of ‖posterior_mean(gps, z) − true_residual(z)‖
+# field_error = median over pts of ‖posterior_mean(g, z) − true_residual(z)‖
 # ---------------------------------------------------------------------------
-function _field_err(gps, true_residual, pts)
+function _field_err(g, true_residual, pts)
     errs = [
-        norm([predmean(gps[i], z) for i in eachindex(gps)] .- true_residual(z))
+        norm(vec(mean(g, [z])) .- true_residual(z))
             for z in pts
     ]
     return Statistics.median(errs)
@@ -92,7 +92,7 @@ end
 end
 
 @testset "CompositeField protocol: posterior returns residual GP" begin
-    # Assert (b): posterior(cf, vopt) returns the residual GP (d ExactGPs, length d, predmean callable)
+    # Assert (b): posterior(cf, vopt) returns the residual GP (one multi-output ExactGP, g.d == d, predmean/mean callable)
     Random.seed!(7)
 
     u0 = [-1.0, 1.0]; tspan = (0.0, 5.0)
@@ -103,16 +103,16 @@ end
     inner = ExactGPField(SqExponentialKernel(), Z; d = 2)
     cf = CompositeField(fhn_known, inner)
 
-    # posterior(cf, v) must return a vector of ExactGPs of length d=2
-    gps = Magpie.posterior(cf, cf.v0)
-    @test length(gps) == 2
-    @test gps[1] isa Magpie.ExactGP
-    @test gps[2] isa Magpie.ExactGP
+    # posterior(cf, v) must return ONE multi-output ExactGP with d=2
+    g = Magpie.posterior(cf, cf.v0)
+    @test g.d == 2
+    @test g isa Magpie.ExactGP
 
-    # predmean callable on both outputs
+    # predmean callable on both outputs (mean(g, [pt]) is 1×2)
     test_pt = [0.0, 0.0]
-    m1 = predmean(gps[1], test_pt)
-    m2 = predmean(gps[2], test_pt)
+    m = mean(g, [test_pt])
+    m1 = m[1, 1]
+    m2 = m[1, 2]
     @test isfinite(m1) && isfinite(m2)
     @info "CompositeField posterior (prior, w=0)" m1 m2
 
@@ -130,7 +130,7 @@ end
     ret = train!(field, (ts, X); adam_iters = 20, maxiters = 10)
     @test ret === field                                   # returns the same field, not a tuple
     # field.v0 holds the trained vector: the 1-arg posterior (reads field.v0) matches the explicit form.
-    @test predmean(posterior(field)[1], [0.5]) ≈ predmean(posterior(field, field.v0)[1], [0.5])
+    @test predmean(posterior(field), [0.5]) ≈ predmean(posterior(field, field.v0), [0.5])
 end
 
 @testset "posterior is the only reconstruction name" begin
@@ -210,11 +210,11 @@ end
     @test sol_rmse < 0.5   # trajectory recovery (conservative threshold)
 
     # (b) Residual field error at visited states (advisory / loose)
-    gps = Magpie.posterior(cf)
-    @test length(gps) == 2      # posterior IS the residual GP
+    g = Magpie.posterior(cf)
+    @test g.d == 2      # posterior IS the residual GP
 
     pts = [target[:, i] for i in 1:size(target, 2)]
-    ferr = _field_err(gps, local_residual, pts)
+    ferr = _field_err(g, local_residual, pts)
     @info "CompositeField residual field_error at visited states" ferr
     # Advisory assertion: single-trajectory identifiability is limited; we log and assert loosely
     @test ferr < 5.0   # loose (real recovery gives ≪ 1; diverged gives > 10)
@@ -234,7 +234,7 @@ end
     Zx = [[x] for x in range(0.3, 1.0; length = 5)]
     cf_ex = CompositeField(known, ExactGPField(SqExponentialKernel(), Zx; d = 1))
     train!(cf_ex, (ts, X); adam_iters = 100, maxiters = 40)
-    @test length(posterior(cf_ex)) == 1
+    @test posterior(cf_ex).d == 1
     ens = propagate(cf_ex, u0, tspan; method = Pathwise(n = 16), ts = ts)
     @test size(ens, 3) == length(ts)
     @test_throws Exception propagate(cf_ex, u0, tspan; method = PULL(), ts = ts)
@@ -243,5 +243,5 @@ end
     Zs = kmeans_anchors(X, 5; rng = MersenneTwister(2))
     cf_sv = CompositeField(known, SVGPField(SqExponentialKernel(), Zs; dout = 1))
     train!(cf_sv, (ts, X); nsamples = 8, adam_iters = 100, maxiters = 40)
-    @test isfinite(predmean(posterior(cf_sv)[1], [0.5]))
+    @test isfinite(predmean(posterior(cf_sv), [0.5]))
 end

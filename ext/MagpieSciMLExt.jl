@@ -481,11 +481,14 @@ function Magpie.posterior(field::ExactGPField, v)
     jit = exp(field.lognoise + 2 * h.logσ)          # RELATIVE jitter — must match solve_alpha so α == the trained field's
     K = kernelmatrix(k, field.Z) + jit * I
     C = _chol(K)
-    α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
+    W = Magpie.wmat(L, v)                          # n×d trained weights
     prior = AbstractGPs.GP(field.prior.mean, k)
-    # Each per-output reconstruction is a single-output (d=1) spine ExactGP (multi-output spine added
-    # the trailing `d` field in PR #2); the GP-UDE field keeps the per-output Vector representation.
-    return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit, 1) for i in 1:field.d]
+    # A single-output field is a genuine single-output ExactGP — vector α/δ, matching the spine's
+    # d=1 contract (the d>1 code paths expect matrices; d=1 paths expect vectors).
+    field.d == 1 && return ExactGP(prior, field.Z, zeros(field.n), C, vec(C \ W), jit, 1)
+    # d>1: ONE multi-output ExactGP — α is the n×d weight matrix; the shared Cholesky C gives the
+    # output-independent variance/covariance; δ is unused on the prediction path. mean(g, xs) → nx×d.
+    return ExactGP(prior, field.Z, zeros(field.n, field.d), C, C \ W, jit, field.d)
 end
 
 # ---------------------------------------------------------------------------
@@ -557,7 +560,7 @@ svgp_elbo_loss(field::SVGPField, trajectories; tspan, nsamples::Int = 16, seed::
     svgp_sampled_loss(field, trajectories, Magpie.SingleShooting(), tspan; nsamples, seed, kw...)
 
 # ---------------------------------------------------------------------------
-# posterior(::SVGPField): reconstruct dout SparseGPs from trained params.
+# posterior(::SVGPField): reconstruct ONE multi-output SparseGP from the trained params.
 # Relative jitter field.jitter·σ² matches the in-loss Cholesky so reconstructed α == trained α.
 # ---------------------------------------------------------------------------
 
@@ -571,13 +574,12 @@ function Magpie.posterior(field::SVGPField, v)
     L_ZZ = _chol(kernelmatrix(k, Zvec) + jit * I).L
     μ = Magpie.svgp_μ(field, v)                   # M×dout
     prior = AbstractGPs.GP(field.prior.mean, k)
-    return [
-        SparseGP(
-                prior, Zvec, L_ZZ' \ μ[:, i], L_ZZ,
-                Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M)
-            )
-            for i in 1:field.dout
-    ]
+    Ls = [Magpie.unpack_LS(Magpie.svgp_Lsblk(field, v, i), field.M) for i in 1:field.dout]
+    # A single-output SVGP is a genuine single-output SparseGP — vector α + a single L_S.
+    field.dout == 1 && return SparseGP(prior, Zvec, vec(L_ZZ' \ μ), L_ZZ, Ls[1])
+    # dout>1: ONE multi-output SparseGP — α = L_ZZ' \ μ (M×dout); per-output variational factors L_S (one
+    # per output, since each output keeps its own variational covariance — unlike ExactGP's shared variance).
+    return SparseGP(prior, Zvec, L_ZZ' \ μ, L_ZZ, Ls, field.dout)
 end
 
 # ---------------------------------------------------------------------------
@@ -587,9 +589,17 @@ end
 
 import ForwardDiff
 
-field_mean(gps, u) = [predmean(g, u) for g in gps]
-pull_jacobian(gps, u) = ForwardDiff.jacobian(uu -> field_mean(gps, uu), u)
-field_var(gps, u) = Diagonal([only(AbstractGPs.var(g, [u])) for g in gps])
+# The propagation/eval machinery operates on ONE multi-output GP `g` (`posterior(field)`), reading per-output
+# quantities through these accessors. ExactGP shares variance/covariance across outputs (depend only on the
+# inputs/Cholesky); SparseGP keeps them per-output (each output has its own variational factor L_S).
+field_mean(g, u) = vec(Magpie.mean(g, [u]))                  # length-d: mean(g,[u]) is 1×d (d>1) or length-1 (d=1)
+pull_jacobian(g, u) = ForwardDiff.jacobian(uu -> field_mean(g, uu), u)
+_field_vars(g::ExactGP, u) = fill(only(AbstractGPs.var(g, [u])), g.d)                       # shared across outputs
+_field_vars(g::Magpie.SparseGP, u) = g.d == 1 ? [only(AbstractGPs.var(g, [u]))] : vec(Magpie.var(g, [u]))
+field_var(g, u) = Diagonal(_field_vars(g, u))               # d×d diagonal of per-output marginal variances
+# Cross-covariance of OUTPUT k between single points a, b (scalar).
+_output_cov(g::ExactGP, k, a, b) = only(AbstractGPs.cov(g, [a], [b]))                       # output-independent
+_output_cov(g::Magpie.SparseGP, k, a, b) = only(Magpie.svgp_output_cov(g, k, [a], [b]))     # per-output L_S
 
 # Project a symmetric matrix onto the PSD cone with a small RELATIVE floor, so the
 # result is a valid (positive-definite) covariance. Forward-only path — never
@@ -607,9 +617,8 @@ end
     pull_propagate(gps, u0, ts; buffer=typemax(Int)) -> (μs, Σs)
 
 Propagate a Gaussian uncertainty (μ, Σ) forward through the GP field via a corrected
-moment-matching recurrence (no ODE solver). `gps` is a `Vector{ExactGP}` (one per output
-dimension). Returns `μs` and `Σs` — vectors of mean vectors and covariance matrices at
-each time step in `ts`.
+moment-matching recurrence (no ODE solver). `g` is ONE multi-output GP (the field's posterior).
+Returns `μs` and `Σs` — vectors of mean vectors and covariance matrices at each time step in `ts`.
 
 Recurrence (PULL, arXiv:2211.11103 eq 36b, with cross-cov Dₙ):
     Aₙ = I + h·Jₙ,  Jₙ = ForwardDiff Jacobian of field_mean at μₙ
@@ -621,22 +630,22 @@ Note: the field-variance term is h²·Vₙ — Euler `x→x+h·f` gives `Var(h·
 white-noise rate h·Vₙ). Exact linear-field oracle is eq 21b Σ(t)=(β/a²)(1−e^{at})² (coherent),
 not the white-noise (β/−2a)(1−e^{2at}); the cross-cov Dₙ realizes the coherence ("past matters").
 """
-function pull_propagate(gps, u0, ts; buffer::Int = typemax(Int))
+function pull_propagate(g, u0, ts; buffer::Int = typemax(Int))
     d = length(u0); μ = collect(float.(u0)); Σ = zeros(d, d)
     μs = [copy(μ)]; Σs = [copy(Σ)]; histμ = [copy(μ)]; histA = Matrix{Float64}[]
     nproj = 0
     for n in 1:(length(ts) - 1)
         h = ts[n + 1] - ts[n]
-        A = I + h .* pull_jacobian(gps, μ)
-        V = field_var(gps, μ)                                # marginal variance V_n (buffer-free term)
-        Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
+        A = I + h .* pull_jacobian(g, μ)
+        V = field_var(g, μ)                                  # marginal variance V_n (buffer-free term)
+        Dn = _pull_Dn(g, histμ, histA, μ, h, d; buffer)
         # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
         # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
         Σraw = Matrix(Symmetric(A * Σ * A' + h^2 .* Matrix(V) + h .* (A * Dn + Dn' * A')))
         minev = minimum(eigen(Symmetric(Σraw)).values)
         Σ = _project_psd(Σraw)
         minev < 0 && (nproj += 1)
-        μ = μ + h .* field_mean(gps, μ)
+        μ = μ + h .* field_mean(g, μ)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))
     end
     nproj > 0 && @warn "PULL: projected $nproj/$(length(ts) - 1) step(s) onto the PSD cone (indefinite moment-matched Σ)"
@@ -657,7 +666,7 @@ runs back to lo. The key index fixes vs the original buggy loop:
   - `npast` (not `length(histμ)`) as the upper bound — excludes the self-term.
   - `histA[i]` (not `histA[i-1]`) — correct Jacobian at past state i.
 """
-function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = typemax(Int))
+function _pull_Dn(g, histμ, histA, μ, h, d; buffer::Int = typemax(Int))
     Dn = zeros(d, d)
     buffer == 0 && return Dn
     npast = length(histμ) - 1                      # exclude the current state (self term)
@@ -665,7 +674,7 @@ function _pull_Dn(gps, histμ, histA, μ, h, d; buffer::Int = typemax(Int))
     lo = max(1, npast - buffer + 1)
     prodA = Matrix{Float64}(I, d, d)
     for i in npast:-1:lo                            # past states ν_i, nearest first
-        covf = Diagonal([only(AbstractGPs.cov(gps[k], [histμ[i]], [μ])) for k in 1:d])
+        covf = Diagonal([_output_cov(g, k, histμ[i], μ) for k in 1:d])
         Dn += prodA * covf                          # nearest-past term has product I
         i > lo && (prodA = prodA * histA[i])        # A_k = histA[i] (Jacobian at state i)
     end
@@ -680,15 +689,15 @@ Internal: propagate the mean path and return the per-step Dₙ sequence (one mat
 time step, length = length(ts)-1). Used by tests to assert the cross-cov telescope
 against a brute-force reference in a non-constant-Jacobian regime.
 """
-function _pull_Dn_sequence(gps, u0, ts; buffer::Int = typemax(Int))
+function _pull_Dn_sequence(g, u0, ts; buffer::Int = typemax(Int))
     d = length(u0); μ = collect(float.(u0))
     histμ = [copy(μ)]; histA = Matrix{Float64}[]; Dns = Matrix{Float64}[]
     for n in 1:(length(ts) - 1)
         h = ts[n + 1] - ts[n]
-        A = I + h .* pull_jacobian(gps, μ)
-        Dn = _pull_Dn(gps, histμ, histA, μ, h, d; buffer)
+        A = I + h .* pull_jacobian(g, μ)
+        Dn = _pull_Dn(g, histμ, histA, μ, h, d; buffer)
         push!(Dns, copy(Dn))
-        μ = μ + h .* field_mean(gps, μ)
+        μ = μ + h .* field_mean(g, μ)
         push!(histμ, copy(μ)); push!(histA, A)
     end
     return Dns
@@ -715,27 +724,32 @@ using Random: MersenneTwister
 # ensembles stay reproducible. Do NOT change these expressions — tests pin ensemble output.
 # ---------------------------------------------------------------------------
 
-# Per-output decoupled sampler from an ExactGP `g` (ExactGP + CompositeField fields).
+# Per-output decoupled sampler from the multi-output ExactGP `g` (ExactGP + CompositeField fields).
+# The posterior covariance at the anchors is OUTPUT-INDEPENDENT (shared C); only the mean column differs.
 function _exact_pathwise_sampler(g, i, sidx)
     k = g.prior.kernel                          # ScaledKernel (carries σ²)
     ℓ = Magpie._lengthscale(k)                  # peel ScaledKernel → inner TransformedKernel
     σ = sqrt(k(g.x[1], g.x[1]))                 # k(x,x) = σ² for stationary SE
-    # Consistent inducing-value draw from the posterior at the anchors.
-    uvals = Magpie.mean(g, g.x) .+
+    meancol = g.d == 1 ? Magpie.mean(g, g.x) : Magpie.mean(g, g.x)[:, i]   # output-i posterior mean at anchors
+    # Consistent inducing-value draw from the posterior at the anchors (shared posterior cov).
+    uvals = meancol .+
         Magpie._chol(Magpie.cov(g, g.x) + 1.0e-8 * I).L * randn(MersenneTwister(sidx * 131 + i), length(g.x))
     return Magpie.build_decoupled_sample(
         k, g.x, uvals; ℓ = ℓ, σ = σ, rng = MersenneTwister(sidx * 131 + i + 500_000)
     )
 end
 
-# Per-output decoupled sampler from a SparseGP `g`: draw whitened v_s ~ N(μ_i, S),
-# lift to inducing values u_s = L_ZZ v_s, then build the decoupled sampler.
+# Per-output decoupled sampler from the multi-output SparseGP `g`: draw whitened v_s ~ N(μ_i, S_i),
+# lift to inducing values u_s = L_ZZ v_s, then build the decoupled sampler. Each output carries its
+# own variational mean (α[:,i]) and factor (L_S[i]).
 function _svgp_pathwise_sampler(g, i, sidx)
     k = g.prior.kernel
     ℓ = Magpie._lengthscale(k)
     σ = sqrt(k(g.Z[1], g.Z[1]))
-    μ_i = g.L_ZZ' * g.α                         # recover variational mean from α = L_ZZ' \ μ_i
-    v_s = μ_i .+ g.L_S * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
+    αcol = g.d == 1 ? g.α : g.α[:, i]
+    L_S_i = g.d == 1 ? g.L_S : g.L_S[i]
+    μ_i = g.L_ZZ' * αcol                        # recover variational mean from α = L_ZZ' \ μ_i
+    v_s = μ_i .+ L_S_i * randn(MersenneTwister(sidx * 977 + i + 500_000), length(μ_i))
     u_s = g.L_ZZ * v_s
     return Magpie.build_decoupled_sample(
         k, g.Z, u_s; ℓ = ℓ, σ = σ, rng = MersenneTwister(sidx * 977 + i)
@@ -746,12 +760,12 @@ end
 # to every RHS evaluation (defaults to the zero field for non-composite cases, so the value
 # is identical to a known-free RHS). Returns an `N × d × length(ts)` array.
 function _pathwise_integrate(
-        gps, build_sampler, u0, tspan, ts, m::Magpie.Pathwise; known = (u, t) -> zero(u)
+        g, build_sampler, u0, tspan, ts, m::Magpie.Pathwise; known = (u, t) -> zero(u)
     )
     d = length(u0); S = m.n
     out = zeros(S, d, length(ts))
     for sidx in 1:S
-        samplers = [build_sampler(g, i, sidx) for (i, g) in enumerate(gps)]
+        samplers = [build_sampler(g, i, sidx) for i in 1:g.d]
         function rhs!(du, u, p, t)
             kphys = known(u, t)
             for i in 1:d
@@ -767,9 +781,9 @@ end
 # ---- ExactGP vector field -------------------------------------------------
 
 """
-    propagate(gps, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
+    propagate(g, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
 
-Propagate uncertainty through a GP vector field (one `ExactGP` per output dimension).
+Propagate uncertainty through a GP vector field — `g` is ONE multi-output `ExactGP` posterior.
 
 - `method=PULL()` — analytic moment-matching via `pull_propagate`.
 - `method=Pathwise(n=N)` — Monte-Carlo ensemble of `N` decoupled GP samples integrated as plain ODEs.
@@ -780,13 +794,13 @@ Returns `(μs, Σs)` for PULL, or an `N × d × length(ts)` array for Pathwise.
 value biases Σ downward.
 """
 function Magpie.propagate(
-        gps::AbstractVector{<:ExactGP}, u0, tspan;
+        g::ExactGP, u0, tspan;
         method = Magpie.PULL(),
         ts = collect(range(tspan...; length = 21)),
         buffer = typemax(Int)
     )
-    method isa Magpie.PULL && return pull_propagate(gps, u0, ts; buffer)
-    return _pathwise(gps, u0, tspan, ts, method)
+    method isa Magpie.PULL && return pull_propagate(g, u0, ts; buffer)
+    return _pathwise(g, u0, tspan, ts, method)
 end
 
 """
@@ -797,30 +811,30 @@ Reconstruct the posterior GPs from the trained field and dispatch to `propagate(
 Magpie.propagate(field::ExactGPField, u0, tspan; kw...) =
     Magpie.propagate(Magpie.posterior(field), u0, tspan; kw...)
 
-# Internal Pathwise integrator for ExactGP fields.
-_pathwise(gps, u0, tspan, ts, m::Magpie.Pathwise) =
-    _pathwise_integrate(gps, _exact_pathwise_sampler, u0, tspan, ts, m)
+# Internal Pathwise integrator for an ExactGP field.
+_pathwise(g, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(g, _exact_pathwise_sampler, u0, tspan, ts, m)
 
 # ---- SparseGP vector field -------------------------------------------------
 
 """
-    propagate(sgps, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
+    propagate(g, u0, tspan; method=PULL(), ts, buffer) -> (μs, Σs) | ensemble
 
-Propagate uncertainty through a sparse GP vector field (one `SparseGP` per output dimension).
-PULL uses `pull_propagate` (unchanged — `SparseGP` implements `predmean`/`var`/`cov`).
+Propagate uncertainty through a sparse GP vector field — `g` is ONE multi-output `SparseGP` posterior.
+PULL uses `pull_propagate` (`SparseGP` implements `mean`/`var` and per-output `svgp_output_cov`).
 Pathwise draws from the whitened variational posterior and integrates as plain ODEs.
 
 `buffer`: number of past cross-covariance terms retained (default: full history); a finite
 value biases Σ downward.
 """
 function Magpie.propagate(
-        sgps::AbstractVector{<:SparseGP}, u0, tspan;
+        g::SparseGP, u0, tspan;
         method = Magpie.PULL(),
         ts = collect(range(tspan...; length = 21)),
         buffer = typemax(Int)
     )
-    method isa Magpie.PULL && return pull_propagate(sgps, u0, ts; buffer)
-    return _pathwise_svgp(sgps, u0, tspan, ts, method)
+    method isa Magpie.PULL && return pull_propagate(g, u0, ts; buffer)
+    return _pathwise_svgp(g, u0, tspan, ts, method)
 end
 
 """
@@ -831,9 +845,9 @@ Reconstruct the sparse posterior GPs from the trained field and dispatch.
 Magpie.propagate(field::SVGPField, u0, tspan; kw...) =
     Magpie.propagate(Magpie.posterior(field), u0, tspan; kw...)
 
-# Internal Pathwise integrator for SparseGP fields.
-_pathwise_svgp(sgps, u0, tspan, ts, m::Magpie.Pathwise) =
-    _pathwise_integrate(sgps, _svgp_pathwise_sampler, u0, tspan, ts, m)
+# Internal Pathwise integrator for a SparseGP field.
+_pathwise_svgp(g, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(g, _svgp_pathwise_sampler, u0, tspan, ts, m)
 
 # ---- CompositeField propagation ----------------------------------------------
 # CompositeField = known_physics (fixed) + residual GP field.
@@ -868,16 +882,16 @@ function Magpie.propagate(
                 "uncertainty propagation (it correctly integrates known_physics + GP sample)."
         )
     end
-    gps = Magpie.posterior(cf)   # residual GPs (ExactGP or SparseGP, per the inner field)
+    g = Magpie.posterior(cf)   # the residual GP (a multi-output ExactGP or SparseGP, matching the inner field)
     known = cf.known
-    return _pathwise_composite(gps, known, u0, tspan, ts, method)
+    return _pathwise_composite(g, known, u0, tspan, ts, method)
 end
 
 # Internal Pathwise integrator for CompositeField: `du = known(u,t) + sampler_i(u)`.
-# Dispatch on ExactGP inner (default) or SparseGP inner (SVGPField residual).
-_pathwise_composite(gps::AbstractVector{<:ExactGP}, known, u0, tspan, ts, m::Magpie.Pathwise) =
-    _pathwise_integrate(gps, _exact_pathwise_sampler, u0, tspan, ts, m; known = known)
-_pathwise_composite(gps::AbstractVector{<:SparseGP}, known, u0, tspan, ts, m::Magpie.Pathwise) =
-    _pathwise_integrate(gps, _svgp_pathwise_sampler, u0, tspan, ts, m; known = known)
+# Dispatch on the multi-output ExactGP inner (default) or SparseGP inner (SVGPField residual).
+_pathwise_composite(g::ExactGP, known, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(g, _exact_pathwise_sampler, u0, tspan, ts, m; known = known)
+_pathwise_composite(g::Magpie.SparseGP, known, u0, tspan, ts, m::Magpie.Pathwise) =
+    _pathwise_integrate(g, _svgp_pathwise_sampler, u0, tspan, ts, m; known = known)
 
 end # module
