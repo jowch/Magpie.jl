@@ -12,9 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Tests** (`test/`, 161): self-consistency invariants, Mooncake/finite-difference AD checks, multi-output, ARD/composite kernels, LaplaceGP evidence + fit, and end-to-end exemplars (A1 level-set, A2 BALD boundary, critical points, saddle).
 - **Examples** (`examples/`, Literate.jl → docs + CI anti-rot): Müller–Brown single-ended transition state from one minimum (custom anisotropic r²-Taylor Matérn), level-set (ARD ellipse), BALD classification (fitted classifier), volcano DEM (ARD). Author per **[`examples/STYLE.md`](examples/STYLE.md)**.
 
-**Deferred** (documented, not built): SparseGP/inducing, the decoupled (Matheron) sampler, multi-class BALD, **coregionalized/multi-output kernels** (ICM/LMC — see `docs/superpowers/specs/2026-06-23-multi-output-boundary.md`; available via plain AbstractGPs + `MOInput` today), multi-output acquisitions, the generic r²-Taylor derivative kernel (`docs/superpowers/specs/2026-06-23-matern-derivative-variance.md`), and all of **Capability B (GP-in-SciML bridge)** — the next plan.
+**Deferred** (documented, not built): SparseGP/inducing, the decoupled (Matheron) sampler, multi-class BALD, **coregionalized/multi-output kernels** (ICM/LMC — see `.superpowers/specs/2026-06-23-multi-output-boundary.md`; available via plain AbstractGPs + `MOInput` today), multi-output acquisitions, the generic r²-Taylor derivative kernel (`.superpowers/specs/2026-06-23-matern-derivative-variance.md`), and all of **Capability B (GP-in-SciML bridge)** — the next plan.
 
 The design rationale lives in `docs/research/` (start at `docs/research/README.md`) — research notes recording not just what to build but *why* each numerical and autodiff choice was made; `docs/research/critique.md` is the opinionated counterweight (effort ranked by payoff). Read them before non-trivial changes. **Note:** `docs/research/` is kept local and is gitignored — it is not part of the public repository, so the `docs/research/...` references throughout this file resolve only in a local working tree.
+
+**Process docs (design specs + implementation plans) belong in `.superpowers/`, not in the repo.** It is gitignored (local-only, like `docs/research/`); write all spec/plan working artifacts there — never under `docs/` — so they stay out of the public surface. The `.superpowers/...` references in this file resolve only in a local working tree.
 
 ## Commands
 
