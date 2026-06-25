@@ -64,16 +64,29 @@ function _laplace_fit(prior, x, y_bool)
     return a, W, L
 end
 
+function _to_labels(y)
+    eltype(y) === Bool && return collect(Bool, y)
+    vals = unique(y)
+    Set(vals) ⊆ Set((0, 1)) && return Bool[yi == 1 for yi in y]
+    Set(vals) ⊆ Set((-1, 1)) && return Bool[yi == 1 for yi in y]
+    throw(ArgumentError("LaplaceGP labels must encode two classes as Bool, {0,1}, or {-1,+1}; got value set $(sort(vals))"))
+end
+
 """
-    update(g::LaplaceGP, X, y::AbstractVector{Bool}) -> LaplaceGP
+    update(g::LaplaceGP, X, y) -> LaplaceGP
 
 Condition the classifier on new labelled inputs `(X, y)`. Because the Laplace MAP
 is re-fit from scratch, the new data is appended to the stored history and the MAP
 solve (`_laplace_fit`) is rerun over the full set.
+
+Labels `y` may be `Bool`, `{0,1}` integers, or `{-1,+1}` integers; they are coerced
+to `Bool` before fitting.
 """
-function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector{Bool})
+function update(g::LaplaceGP, X::AbstractVector, y::AbstractVector)
+    yb = _to_labels(y)
+    _validate_obs(X, yb)
     xall = vcat(g.x, collect(X))
-    yall = vcat(g.y, y)
+    yall = vcat(g.y, yb)
     a, W, L = _laplace_fit(g.prior, xall, yall)
     return LaplaceGP(g.prior, xall, yall, a, W, L)
 end
@@ -106,5 +119,34 @@ Statistics.cov(g::LaplaceGP, xs::AbstractVector) =
 """Posterior latent mean at a single input `u`, as a scalar; `>0` predicts the positive class."""
 predmean(g::LaplaceGP, u) = mean(g, [u])[1]
 
-# v1: the Laplace path does no hyperparameter refit, so `fit` returns the GP unchanged.
-fit(g::LaplaceGP; kwargs...) = g
+@doc raw"""
+    nlml(g::LaplaceGP) -> Real
+
+Negative Laplace log marginal likelihood (Rasmussen & Williams, eq. 3.32) — the objective
+[`fit`](@ref) minimizes for a `LaplaceGP`:
+
+```math
+-\log q(y \mid X) = \tfrac{1}{2}(\hat f - m)^\top a \;-\; \log p(y \mid \hat f)\;+\;\sum_i \log L_{ii},
+```
+
+where ``\hat f = K a + m`` is the MAP latent, ``a`` the cached dual, and ``L`` the Cholesky factor
+of ``B = I + W^{1/2} K W^{1/2}``. Returns `0.0` for an unconditioned classifier.
+"""
+function nlml(g::LaplaceGP)
+    _hasdata(g) || return 0.0
+    m = AbstractGPs.mean(g.prior, g.x)
+    K = Matrix(Symmetric(AbstractGPs.cov(g.prior, g.x))) + 1.0e-9I
+    Ka = K * g.a
+    fhat = Ka .+ m
+    t = float.(g.y)
+    softplus(z) = log1p(exp(-abs(z))) + max(z, zero(z))   # numerically stable log(1 + eᶻ)
+    loglik = sum(t .* fhat .- softplus.(fhat))            # logistic log p(y | f̂)
+    quad = 0.5 * dot(Ka, g.a)                             # ½(f̂-m)ᵀ K⁻¹ (f̂-m) = ½(Ka)ᵀa
+    logdetB = sum(log, diag(g.L))                         # ½ log|B|
+    return quad - loglik + logdetB
+end
+
+# Hooks that let the generic `fit` (src/fit.jl) drive a LaplaceGP: its training data and how to
+# rebuild+condition it from a trial kernel. Hyperparameter fitting maximizes the Laplace evidence.
+_fit_xy(g::LaplaceGP) = (g.x, g.y)
+_recondition(g::LaplaceGP, kernel, X, y) = update(LaplaceGP(kernel; mean = g.prior.mean), X, y)

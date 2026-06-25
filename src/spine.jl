@@ -44,10 +44,10 @@ Field names follow Rasmussen & Williams (Algorithm 2.1).
 Build an unconditioned `ExactGP`; condition it on data with [`update`](@ref).
 """
 struct ExactGP{Tp, Tx, Tδ, TC, Tα} <: AbstractGPModel
-    prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64
+    prior::Tp; x::Tx; δ::Tδ; C::TC; α::Tα; noise::Float64; d::Int
 end
-ExactGP(kernel::Kernel; noise::Real = 1.0e-6, mean = AbstractGPs.ZeroMean()) =
-    ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise))
+ExactGP(kernel::Kernel; noise::Real = 1.0e-6, mean = AbstractGPs.ZeroMean(), d::Int = 1) =
+    ExactGP(AbstractGPs.GP(mean, kernel), Any[], Float64[], nothing, Float64[], Float64(noise), d)
 
 # True once the GP has been conditioned on data (the Cholesky factor exists).
 _hasdata(g::ExactGP) = g.C !== nothing
@@ -68,7 +68,8 @@ _chol(K) = cholesky(Symmetric(K); check = false)
 """Posterior mean at `xs`: prior mean `m(xs)` plus `cov(xs, x)·α` once conditioned."""
 function Statistics.mean(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
-    return _hasdata(g) ? m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α : m
+    _hasdata(g) || return g.d == 1 ? m : repeat(m, 1, g.d)
+    return m .+ AbstractGPs.cov(g.prior, xs, g.x) * g.α          # vector (d=1) or nx×d (d>1)
 end
 
 """Posterior (marginal) variance at `xs`: prior variance minus the data-explained part."""
@@ -89,6 +90,37 @@ function Statistics.cov(g::ExactGP, xs::AbstractVector)
     return _hasdata(g) ? c .- Xt_invA_X(g.C, AbstractGPs.cov(g.prior, g.x, xs)) : c
 end
 
+_allfinite(v::Number) = isfinite(v)
+_allfinite(v) = all(isfinite, v)
+_inputdim(v::Number) = 1
+_inputdim(v) = length(v)
+
+"""
+    _validate_obs(X, y)
+
+Validate an observation batch before conditioning: equal counts, non-empty, all-finite,
+and consistent input dimension. Throws `ArgumentError` with an actionable message.
+"""
+function _validate_obs(X, y)
+    length(X) == length(y) ||
+        throw(ArgumentError("observation count mismatch: $(length(X)) inputs vs $(length(y)) values"))
+    isempty(X) && throw(ArgumentError("cannot condition a GP on an empty observation set"))
+    all(_allfinite, X) || throw(ArgumentError("input set contains non-finite (NaN/Inf) values"))
+    all(_allfinite, y) || throw(ArgumentError("observed values contain non-finite (NaN/Inf) values"))
+    allequal(_inputdim(x) for x in X) ||
+        throw(ArgumentError("inputs have inconsistent dimension: $(unique(_inputdim(x) for x in X))"))
+    return nothing
+end
+
+# Observation values → the conditioning RHS. d=1 keeps a Vector (the single-output path is
+# unchanged); d>1 stacks the per-point length-d observations into an n×d Matrix.
+function _obsmatrix(y, d::Int)
+    d == 1 && return collect(float.(y))
+    all(yi -> length(yi) == d, y) ||
+        throw(ArgumentError("each observation must have length d=$d; got lengths $(unique(length.(y)))"))
+    return permutedims(reduce(hcat, [collect(float.(yi)) for yi in y]))    # n×d
+end
+
 """
     update(g::ExactGP, X, y) -> ExactGP
 
@@ -99,12 +131,13 @@ Cholesky factor incrementally via `AbstractGPs.update_chol`. A scalar `y` condit
 on a single point.
 """
 function update(g::ExactGP, X::AbstractVector, y::AbstractVector)
+    _validate_obs(X, y)
     _hasdata(g) && return _update_incremental(g, X, y)
     xnew = collect(X)
-    δnew = y .- AbstractGPs.mean(g.prior, xnew)
+    δnew = _obsmatrix(y, g.d) .- AbstractGPs.mean(g.prior, xnew)     # vector (d=1) or n×d matrix
     K = AbstractGPs.cov(g.prior, xnew) + g.noise * I
     C = _chol(K)
-    return ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise)
+    return ExactGP(g.prior, xnew, δnew, C, C \ δnew, g.noise, g.d)
 end
 update(g::ExactGP, x, y::Real) = update(g, [x], [y])
 
@@ -116,9 +149,9 @@ cross-covariance `cov(x, xs)` between both — cheaper than separate calls.
 """
 function mean_and_var(g::ExactGP, xs::AbstractVector)
     m = AbstractGPs.mean(g.prior, xs)
-    _hasdata(g) || return (m, AbstractGPs.var(g.prior, xs))
+    _hasdata(g) || return (g.d == 1 ? m : repeat(m, 1, g.d), AbstractGPs.var(g.prior, xs))
     Ks = AbstractGPs.cov(g.prior, g.x, xs)                    # shared between mean and variance
-    return (m .+ Ks' * g.α, AbstractGPs.var(g.prior, xs) .- diag_Xt_invA_X(g.C, Ks))
+    return (m .+ Ks' * g.α, AbstractGPs.var(g.prior, xs) .- diag_Xt_invA_X(g.C, Ks))   # var shared across outputs
 end
 
 """
@@ -126,6 +159,10 @@ end
 
 Posterior mean and marginal variance at the inputs `xs` (an alias for
 `mean_and_var` on any `AbstractGP`).
+
+For a `d>1` GP, the mean is an `nx×d` matrix (one column per output) and the
+variance is a length-`nx` vector shared across outputs (it depends only on the
+training inputs `x`, not on the observed values).
 """
 predict(g::AbstractGPs.AbstractGP, xs::AbstractVector) = mean_and_var(g, xs)
 
@@ -133,11 +170,16 @@ predict(g::AbstractGPs.AbstractGP, xs::AbstractVector) = mean_and_var(g, xs)
     predmean(g::ExactGP, u) -> Real
 
 Posterior mean at a single input `u`, returned as a scalar (unlike `mean(g, [u])`,
-which returns a length-1 vector).
+which returns a length-1 vector). Only supported for single-output GPs (`d=1`);
+throws `ArgumentError` for `d>1`.
 """
-predmean(g::ExactGP, u) = _hasdata(g) ?
-    only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
-    only(AbstractGPs.mean(g.prior, [u]))
+function predmean(g::ExactGP, u)
+    g.d == 1 ||
+        throw(ArgumentError("predmean returns a scalar but this GP has d=$(g.d) outputs; use mean(g, [u]) for the length-d vector"))
+    return _hasdata(g) ?
+        only(AbstractGPs.mean(g.prior, [u])) + dot(AbstractGPs.cov(g.prior, g.x, [u]), g.α) :
+        only(AbstractGPs.mean(g.prior, [u]))
+end
 
 """
     _update_incremental(g::ExactGP, X, y) -> ExactGP
@@ -153,6 +195,6 @@ function _update_incremental(g::ExactGP, X::AbstractVector, y::AbstractVector)
     C22 = Matrix(Symmetric(AbstractGPs.cov(g.prior, xnew) + g.noise * I))
     Cext = update_chol(g.C, C12, C22)
     xall = vcat(g.x, xnew)
-    δall = vcat(g.δ, y .- AbstractGPs.mean(g.prior, xnew))
-    return ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise)
+    δall = vcat(g.δ, _obsmatrix(y, g.d) .- AbstractGPs.mean(g.prior, xnew))   # vcat rows; matrix-safe
+    return ExactGP(g.prior, xall, δall, Cext, Cext \ δall, g.noise, g.d)
 end

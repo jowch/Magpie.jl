@@ -9,6 +9,8 @@ const EXAMPLES = Tuple{String, String}[]
 
 push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))
 push!(EXAMPLES, ("Decision boundary (BinaryBALD)", "bald_classification.jl"))
+push!(EXAMPLES, ("Müller–Brown: a transition state from one known minimum", "muller_brown.jl"))
+push!(EXAMPLES, ("Volcano terrain: Morse critical points of a DEM", "volcano_terrain.jl"))
 
 isdir(GENDIR) && rm(GENDIR; recursive = true)
 mkpath(GENDIR)
