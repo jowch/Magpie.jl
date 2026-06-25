@@ -483,7 +483,9 @@ function Magpie.posterior(field::ExactGPField, v)
     C = _chol(K)
     α = C \ Magpie.wmat(L, v)                      # (n×d) weights — reuse the Cholesky factor
     prior = AbstractGPs.GP(field.prior.mean, k)
-    return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit) for i in 1:field.d]
+    # Each per-output reconstruction is a single-output (d=1) spine ExactGP (multi-output spine added
+    # the trailing `d` field in PR #2); the GP-UDE field keeps the per-output Vector representation.
+    return [ExactGP(prior, field.Z, zeros(field.n), C, α[:, i], jit, 1) for i in 1:field.d]
 end
 
 # ---------------------------------------------------------------------------

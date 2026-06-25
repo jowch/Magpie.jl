@@ -16,7 +16,15 @@ abstract type AcquisitionDomain end
 Axis-aligned box domain with lower and upper bounds `lb`, `ub` (per-dimension vectors).
 """
 struct Box{T} <: AcquisitionDomain
-    lb::T; ub::T
+    lb::T
+    ub::T
+    function Box(lb::T, ub::T) where {T}
+        length(lb) == length(ub) ||
+            throw(ArgumentError("Box bounds differ in length: lb has $(length(lb)), ub has $(length(ub))"))
+        all(lb .≤ ub) ||
+            throw(ArgumentError("Box requires lb .≤ ub; violated at dimension(s) $(findall(lb .> ub))"))
+        return new{T}(lb, ub)
+    end
 end
 
 """
@@ -59,6 +67,9 @@ SobolPolish(; n_candidates = 2048, n_restarts = 8, ad = AutoForwardDiff()) = Sob
 Enumerate a regular grid over `box` with `per_axis` points along each dimension.
 """
 function grid_points(box::Box; per_axis::Int = 50)
+    d = length(box.lb)
+    big(per_axis)^d > 1_000_000 &&
+        throw(ArgumentError("grid of $(per_axis)^$(d) points exceeds 10^6; use SobolPolish() or a Points domain for high-D boxes"))
     axes = [range(box.lb[i], box.ub[i]; length = per_axis) for i in eachindex(box.lb)]
     return [collect(p) for p in Iterators.product(axes...)] |> vec
 end
@@ -74,7 +85,14 @@ Return the input in domain `over` that maximizes acquisition `a` under GP `g`. T
 `maximizer` defaults to a sensible strategy for the domain (enumeration for
 [`Points`](@ref), a grid for low-D [`Box`](@ref)es, [`SobolPolish`](@ref) otherwise).
 """
-acquire(g, a; over, maximizer = default_for(over)) = _acquire(g, a, over, maximizer)
+_outputdim(g) = 1
+_outputdim(g::ExactGP) = g.d
+
+function acquire(g, a; over, maximizer = default_for(over))
+    _outputdim(g) == 1 ||
+        throw(ArgumentError("acquisitions are single-output; got a GP with d=$(_outputdim(g)) outputs."))
+    return _acquire(g, a, over, maximizer)
+end
 
 _argmax_over(g, a, X) = X[argmax([a(g, x) for x in X])]
 _acquire(g, a, p::Points, _) = _argmax_over(g, a, p.X)

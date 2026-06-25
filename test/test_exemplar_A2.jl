@@ -9,7 +9,7 @@ using Magpie: LaplaceGP, BinaryBALD, ActiveLearner, observe!, run!, posterior_gp
     for x in [4 .* rand(2) .- 2 for _ in 1:10]
         observe!(al, x, label(x))
     end
-    run!(al, label; budget = 40, over = box)                       # no refit: LaplaceGP fit is a v1 no-op
+    run!(al, label; budget = 40, over = box)                       # fixed kernel here; LaplaceGP refit is available via refit_every
     g = posterior_gp(al); grid = grid_points(box; per_axis = 40)
     accuracy = mean((predmean(g, p) > 0) == label(p) for p in grid)
     @info "A2 metrics" accuracy

@@ -16,6 +16,7 @@ LaplaceGP
 update
 predict
 predmean
+grad_predict
 nlml
 fit
 ```
@@ -28,6 +29,9 @@ MarginalAcquisition
 Straddle
 RandStraddle
 BinaryBALD
+GradStraddle
+RandGradStraddle
+LocalPenalization
 resample
 ```
 
@@ -41,6 +45,15 @@ AcqMaximizer
 SobolPolish
 grid_points
 acquire
+```
+
+## Transition-state search
+
+```@docs
+saddle_walk
+newton_polish
+transition_state
+classify
 ```
 
 ## Active-learning loop

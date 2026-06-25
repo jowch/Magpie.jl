@@ -9,6 +9,8 @@ const EXAMPLES = Tuple{String, String}[]
 
 push!(EXAMPLES, ("Level-set recovery (Straddle)", "levelset_straddle.jl"))
 push!(EXAMPLES, ("Decision boundary (BinaryBALD)", "bald_classification.jl"))
+push!(EXAMPLES, ("Müller–Brown: a transition state from one known minimum", "muller_brown.jl"))
+push!(EXAMPLES, ("Volcano terrain: Morse critical points of a DEM", "volcano_terrain.jl"))
 push!(EXAMPLES, ("GP-UDE: Lotka-Volterra", "gp_ude_lotka_volterra.jl"))
 push!(EXAMPLES, ("GP-UDE: Van der Pol oscillator", "gp_ude_vanderpol.jl"))
 push!(EXAMPLES, ("GP-UDE: FitzHugh-Nagumo (UDE decomp)", "gp_ude_fitzhugh_nagumo.jl"))
