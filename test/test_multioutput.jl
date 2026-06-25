@@ -76,9 +76,8 @@ using Magpie: grad_predict, fit, acquire, Box, ActiveLearner, Straddle, observe!
     @test_throws ArgumentError acquire(g2, Straddle(); over = Box([-2.0, -2.0], [2.0, 2.0]))
 end
 
-@testset "ActiveLearner infers multi-output value storage" begin
-    al = ActiveLearner(mk(2), Straddle())
-    @test eltype(al.Ys) == Vector{Float64}             # d=2 → vector-valued observations
+@testset "ActiveLearner rejects d>1 (multi-output loop deferred)" begin
+    @test_throws ArgumentError ActiveLearner(mk(2), Straddle())   # acquire/fit also guard d>1
     al1 = ActiveLearner(mk(1), Straddle())
-    @test eltype(al1.Ys) == Float64                    # d=1 unchanged
+    @test eltype(al1.Ys) == Float64                              # d=1 unchanged
 end

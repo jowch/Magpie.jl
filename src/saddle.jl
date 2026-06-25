@@ -5,8 +5,11 @@ using LinearAlgebra: Symmetric, eigen, eigvals, norm, I
 
 Morse classification of a critical point from its Hessian `H` (e.g. the `H̄` returned by
 [`grad_predict`](@ref)). Returns `:min` (no negative eigenvalues), `:saddle` (an index-1
-saddle: exactly one negative eigenvalue in 2-D), `:max` (all negative), or `:unclassified`
+saddle: exactly one negative eigenvalue), `:max` (all negative), or `:unclassified`
 when any eigenvalue is within `ε` of zero (degenerate / ill-determined curvature).
+
+Only index-1 saddles map to `:saddle`; in `d≥3`, higher-index saddles (≥2 negative
+eigenvalues but not all) fall to `:unclassified` — adequate for the 2-D use here.
 """
 function classify(H; ε::Real = 1.0e-3)
     λ = eigvals(Symmetric(H))
@@ -114,21 +117,21 @@ function transition_state(
     length(m1) == length(box.lb) ||
         throw(ArgumentError("seed dimension $(length(m1)) ≠ box dimension $(length(box.lb))"))
     X = _ts_seed(m1, m2, box; nseed = nseed, rng = rng)
-    buildgp(pts) = update(ExactGP(kernel; noise = noise), pts, [f(p) for p in pts])
-    g = buildgp(X)
+    g = update(ExactGP(kernel; noise = noise), X, [f(p) for p in X])   # one f-eval per seed
     mid = (m1 .+ m2) ./ 2
     predict(gp) = predictor === :newton ? newton_polish(gp, mid; box = box) :
         saddle_walk(gp, mid; box = box, η = η)
     history = Tuple{Int, Vector{Float64}, Symbol}[]
     r = predict(g)
     push!(history, (length(X), r.x, classify(r.H)))
+    # Each round spends exactly one new f-eval (incremental Cholesky extension), so total
+    # oracle calls = budget — re-evaluating the whole accumulated set would be quadratic.
     while length(X) < budget
+        xnew = clamp.(r.x, box.lb, box.ub)
+        push!(X, xnew)
+        g = update(g, [xnew], [f(xnew)])
         r = predict(g)
-        push!(X, clamp.(r.x, box.lb, box.ub))
-        g = buildgp(X)
-        r2 = predict(g)
-        push!(history, (length(X), r2.x, classify(r2.H)))
+        push!(history, (length(X), r.x, classify(r.H)))
     end
-    r = predict(g)
     return (saddle = r.x, kind = classify(r.H), converged = r.converged, residual = r.residual, g = g, history = history)
 end

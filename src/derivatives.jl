@@ -24,7 +24,11 @@ function grad_predict(g::ExactGP, x::AbstractVector; hessian::Bool = true)
         throw(ArgumentError("grad_predict is single-output (d=1); got d=$(g.d). Multi-output derivatives are not supported."))
     d = length(x); k = g.prior.kernel
     pv = _prior_grad_var(k, x)                                       # prior Var[∂ᵢf], length d
-    _hasdata(g) || return (zeros(d), pv, hessian ? zeros(d, d) : nothing)
+    # No data: gradient/Hessian are those of the prior mean (∇m, ∇²m) — zero for ZeroMean.
+    _hasdata(g) || return (
+        ForwardDiff.gradient(z -> predmean(g, z), x), pv,
+        hessian ? ForwardDiff.hessian(z -> predmean(g, z), x) : nothing,
+    )
     μ∇ = ForwardDiff.gradient(z -> predmean(g, z), x)
     G = reduce(hcat, (ForwardDiff.gradient(z -> k(z, Xj), x) for Xj in g.x))  # d×n: ∂ᵢk(x,Xⱼ)
     Σdiag = max.(pv .- diag_Xt_invA_X(g.C, permutedims(G)), 0.0)     # permutedims → n×d for helper

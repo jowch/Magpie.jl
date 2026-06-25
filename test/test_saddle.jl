@@ -113,6 +113,19 @@ end
     @test r.x == r[1] && r.H == r[3]   # positional compatibility preserved
 end
 
+@testset "transition_state spends exactly `budget` f-evaluations" begin
+    # Budget contract: incremental conditioning, one new oracle call per round — NOT a
+    # full rebuild (which would be quadratic: ≈ Σ from nseed+2 up to budget).
+    Random.seed!(1)
+    calls = Ref(0)
+    counted(p) = (calls[] += 1; mbt(p))
+    transition_state(
+        counted, MB_min, MC; kernel = mbkernel(), noise = NOISE,
+        box = MB_BOX, budget = 12, nseed = 5, predictor = :minmode
+    )
+    @test calls[] == 12
+end
+
 @testset "transition_state throws on seed/box dimension mismatch" begin
     @test_throws ArgumentError transition_state(
         mbt, [0.0], [1.0]; kernel = mbkernel(), box = MB_BOX, budget = 8

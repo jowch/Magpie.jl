@@ -30,8 +30,8 @@ mutable struct ActiveLearner{TX, TY}
     rng::AbstractRNG
 end
 
-# Observation element type implied by the GP kind (extended for multi-output in Phase 1.5).
-_obs_eltype(g::ExactGP) = g.d == 1 ? Float64 : Vector{Float64}
+# Observation element type implied by the GP kind.
+_obs_eltype(::ExactGP) = Float64
 _obs_eltype(::LaplaceGP) = Bool
 
 # Typed escape hatch: caller fixes the input/value element types.
@@ -39,8 +39,15 @@ ActiveLearner{TX, TY}(gp, acq; rng = Random.default_rng()) where {TX, TY} =
     ActiveLearner{TX, TY}(gp, acq, TX[], TY[], Float64[], rng)
 
 # Convenience: infer Vector{Float64} inputs and the value type from the GP.
-ActiveLearner(gp, acq; rng = Random.default_rng()) =
-    ActiveLearner{Vector{Float64}, _obs_eltype(gp)}(gp, acq; rng = rng)
+function ActiveLearner(gp, acq; rng = Random.default_rng())
+    gp isa ExactGP && gp.d > 1 && throw(
+        ArgumentError(
+            "ActiveLearner supports single-output GPs only (got d=$(gp.d)); the loop's " *
+                "acquire/fit also guard d>1. Multi-output acquisitions are deferred."
+        )
+    )
+    return ActiveLearner{Vector{Float64}, _obs_eltype(gp)}(gp, acq; rng = rng)
+end
 
 """The current posterior GP held by the learner."""
 posterior_gp(al::ActiveLearner) = al.gp
