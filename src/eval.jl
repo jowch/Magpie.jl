@@ -85,12 +85,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    recovery_metrics(gps, truefield, traj_pred, traj_truth; offpts=nothing) -> NamedTuple
+    recovery_metrics(g, truefield, traj_pred, traj_truth; offpts=nothing) -> NamedTuple
 
 Combine trajectory RMSE and field errors into one NamedTuple.  Pure — no solver.
 
 # Arguments
-- `gps`        — `Vector{<:AbstractGPModel}` posterior GP models (one per dim).
+- `g`          — a multi-output GP posterior (`mean(g, [z])` returns the length-`d` field at `z`).
 - `truefield`  — callable `z -> AbstractVector` of true RHS.
 - `traj_pred`  — pre-integrated predicted trajectory (vector of state vectors).
 - `traj_truth` — ground-truth trajectory aligned with `traj_pred`.

@@ -601,17 +601,18 @@ field_var(g, u) = Diagonal(_field_vars(g, u))               # d×d diagonal of p
 _output_cov(g::ExactGP, k, a, b) = only(AbstractGPs.cov(g, [a], [b]))                       # output-independent
 _output_cov(g::Magpie.SparseGP, k, a, b) = only(Magpie.svgp_output_cov(g, k, [a], [b]))     # per-output L_S
 
-# Project a symmetric matrix onto the PSD cone with a small RELATIVE floor, so the
-# result is a valid (positive-definite) covariance. Forward-only path — never
-# differentiated (see eval.jl header) — so `eigen` is unconstrained here.
-function _project_psd(Σ::AbstractMatrix)
-    S = Symmetric(Matrix(Σ))
-    E = eigen(S)
+# Project a symmetric matrix onto the PSD cone with a small RELATIVE floor, so the result is a valid
+# (positive-definite) covariance, AND report the input's minimum eigenvalue — both from ONE eigen
+# factorization (the moment recurrence needs the min eigenvalue to count indefinite steps). Forward-only
+# path — never differentiated (see eval.jl header) — so `eigen` is unconstrained here.
+function _project_psd_minev(Σ::AbstractMatrix)
+    E = eigen(Symmetric(Matrix(Σ)))
     λmax = maximum(E.values)
     fl = λmax > 0 ? 1.0e-10 * λmax : eps()      # relative floor ⇒ PD output, cond ≤ 1e10
     λ = max.(E.values, fl)
-    return Matrix(Symmetric(E.vectors * Diagonal(λ) * E.vectors'))
+    return Matrix(Symmetric(E.vectors * Diagonal(λ) * E.vectors')), minimum(E.values)
 end
+_project_psd(Σ::AbstractMatrix) = first(_project_psd_minev(Σ))
 
 """
     pull_propagate(gps, u0, ts; buffer=typemax(Int)) -> (μs, Σs)
@@ -642,8 +643,7 @@ function pull_propagate(g, u0, ts; buffer::Int = typemax(Int))
         # PULL eq 36b: Σ_{n+1} = A Σ A' + h²·V_n + h·(A D_n + D_nᵀ A')  (D_n already carries one h, eq 37).
         # The field-VARIANCE term is h² (Euler: Var(h·f)=h²·Var(f)), NOT h (that would be a white-noise rate).
         Σraw = Matrix(Symmetric(A * Σ * A' + h^2 .* Matrix(V) + h .* (A * Dn + Dn' * A')))
-        minev = minimum(eigen(Symmetric(Σraw)).values)
-        Σ = _project_psd(Σraw)
+        Σ, minev = _project_psd_minev(Σraw)         # project + min-eigenvalue from ONE factorization
         minev < 0 && (nproj += 1)
         μ = μ + h .* field_mean(g, μ)
         push!(histμ, copy(μ)); push!(histA, A); push!(μs, copy(μ)); push!(Σs, copy(Σ))

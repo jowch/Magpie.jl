@@ -108,6 +108,50 @@ end
     @test all(isfinite, C)
 end
 
+@testset "SVGP multi-output: dout=2 SparseGP mean/var/svgp_output_cov match per-output d=1" begin
+    # A multi-output SparseGP must reduce, output by output, to the single-output SparseGPs built from
+    # the same (μ, L_S) — this is the pure-math coverage for the d>1 prediction comprehensions (the
+    # end-to-end dout=2 path is gated behind MAGPIE_TEST_SCIML_SLOW and does not run in CI).
+    rng = MersenneTwister(11)
+    M = 4
+    prior = AbstractGPs.GP(SqExponentialKernel())
+    Z = [[z] for z in range(-2.0, 2.0; length = M)]
+    L_ZZ = L_ZZ_factor(prior, Z)                              # default jitter — matches the SparseGP ctor
+
+    # Two independent outputs, each with its OWN variational (μ, L_S).
+    mkLS(seed) = unpack_LS(vcat(zeros(M), 0.2 .* randn(MersenneTwister(seed), nLS(M) - M)), M)
+    L_S1 = mkLS(1); L_S2 = mkLS(2)
+    μ1 = 0.5 .* randn(rng, M); μ2 = 0.5 .* randn(rng, M)
+
+    g1 = SparseGP(prior, Z, μ1, L_S1)                        # d=1 reference, output 1
+    g2 = SparseGP(prior, Z, μ2, L_S2)                        # d=1 reference, output 2
+    gmo = SparseGP(prior, Z, hcat(g1.α, g2.α), L_ZZ, [L_S1, L_S2])   # M×2 α + Vector L_S ⇒ inferred d=2
+    @test gmo.d == 2
+
+    xs = [[x] for x in range(-1.5, 1.5; length = 6)]
+    ys = [[x] for x in range(-0.5, 0.5; length = 4)]
+
+    # mean: nx×2, each column equals the matching single-output GP's mean.
+    ms = Statistics.mean(gmo, xs)
+    @test size(ms) == (length(xs), 2)
+    @test ms[:, 1] ≈ Statistics.mean(g1, xs)
+    @test ms[:, 2] ≈ Statistics.mean(g2, xs)
+
+    # var: nx×2, per-output (each uses its own L_S), so the columns genuinely differ.
+    vs = Statistics.var(gmo, xs)
+    @test size(vs) == (length(xs), 2)
+    @test vs[:, 1] ≈ Statistics.var(g1, xs)
+    @test vs[:, 2] ≈ Statistics.var(g2, xs)
+    @test vs[:, 1] != vs[:, 2]
+
+    # svgp_output_cov: per-output cross-cov equals the matching single-output cov.
+    @test Magpie.svgp_output_cov(gmo, 1, xs, ys) ≈ Statistics.cov(g1, xs, ys)
+    @test Magpie.svgp_output_cov(gmo, 2, xs, ys) ≈ Statistics.cov(g2, xs, ys)
+
+    # predmean is scalar-only; a multi-output GP must reject it.
+    @test_throws ArgumentError predmean(gmo, [0.3])
+end
+
 @testset "SVGP: near-singular K_ZZ robustness (duplicate inducing points)" begin
     rng = MersenneTwister(99)
     M = 4
