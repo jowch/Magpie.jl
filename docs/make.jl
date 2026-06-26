@@ -14,8 +14,10 @@ push!(EXAMPLES, ("Volcano terrain: Morse critical points of a DEM", "volcano_ter
 push!(EXAMPLES, ("GP-UDE: Lotka-Volterra", "gp_ude_lotka_volterra.jl"))
 push!(EXAMPLES, ("GP-UDE: Van der Pol oscillator", "gp_ude_vanderpol.jl"))
 push!(EXAMPLES, ("GP-UDE: FitzHugh-Nagumo (UDE decomp)", "gp_ude_fitzhugh_nagumo.jl"))
-push!(EXAMPLES, ("GP-UDE: scale-forcing (SVGP + Pathwise)", "gp_ude_scale_forcing.jl"))
 push!(EXAMPLES, ("GP-UDE: identifiability (ridge + off-data divergence)", "gp_ude_identifiability.jl"))
+# NOTE: gp_ude_scale_forcing.jl is a BY-HAND demo (multi-trajectory sampled SVGP training) — it ran
+# ~78 min in the docs `@example` build, so it is excluded here (same rationale as its removal from the
+# anti-rot CI matrix). The file stays runnable locally; it is just not rendered/executed in CI docs.
 
 isdir(GENDIR) && rm(GENDIR; recursive = true)
 mkpath(GENDIR)
