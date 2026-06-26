@@ -229,11 +229,11 @@ using Test  #src
 # On-support field recovery: SVGP recovers the field on its training support.
 # MEASURED median ≈ 0.68 on this noisy multi-trajectory LV setup — a MODERATE recovery,
 # not a tight one (see the honest-framing note above). Threshold 0.95 = measured + ~40% margin.
-@test ferr_on.median < 0.95   #src  on-support field error (verified ≈ 0.68)
+@test ferr_on.median < 0.95   ## on-support field error (verified ≈ 0.68) #src
 
 # Trajectory RMSE: ODE integration of the GP mean vs clean truth.
 # MEASURED ≈ 0.48. Threshold 0.7 = measured + ~45% margin.
-@test traj_rmse < 0.7   #src  ODE integration of GP mean vs clean truth (verified ≈ 0.48)
+@test traj_rmse < 0.7   ## ODE integration of GP mean vs clean truth (verified ≈ 0.48) #src
 
 # Pathwise ensemble shape and finiteness.
 @test size(ens) == (128, 2, length(ts)) && all(isfinite, ens)   #src
@@ -241,14 +241,14 @@ using Test  #src
 # Off-manifold field error is REPORTED, not asserted: expected larger than on-support.
 # This is the honest contrast — SVGP does not generalise beyond its training support.
 @info "OFF-manifold field error (outside training support, expected larger)" median = ferr_off.median q90 = ferr_off.q90  #src
-@test ferr_off.median > ferr_on.median   #src  sanity: off-manifold is worse (honest contrast)
+@test ferr_off.median > ferr_on.median   ## sanity: off-manifold is worse (honest contrast) #src
 
 # PULL coverage: @info only — Euler drift documented.
 @info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits = 3)) (Euler-limited; documented contrast)."  #src
 
 # Pathwise coverage: assert if reasonable, else report honestly.
 if cov90_path >= 0.6   #src
-    @test cov90_path >= 0.6   #src  Pathwise lower-bound coverage guard (band is conservative/over-covers here)
+    @test cov90_path >= 0.6   ## Pathwise lower-bound coverage guard (band is conservative/over-covers here) #src
 else   #src
     @info "Pathwise coverage below 0.6 ($(round(cov90_path; digits = 3))). Coverage at threshold; check ensemble dispersion." cov90_path  #src
 end   #src

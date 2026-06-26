@@ -200,10 +200,10 @@ savefig(p2, "vdp_trajectory_coverage.png")
 
 using Test  #src
 @info "Trajectory RMSE (GP mean ODE vs clean truth): $(round(metrics.traj_rmse; digits = 4)); on-trajectory field error median $(round(metrics.field_err_visited.median; digits = 4))"  #src
-@test g.d == 2 && all(isfinite, vec(mean(g, [u0])))   #src  posterior → one multi-output GP, finite field
+@test g.d == 2 && all(isfinite, vec(mean(g, [u0])))   ## posterior → one multi-output GP, finite field #src
 @test all(isfinite, (metrics.traj_rmse, metrics.field_err_visited.median, metrics.field_err_offmanifold.median))  #src
-@test metrics.traj_rmse < 3.0   #src  loose sanity — the field tracks, not a total blow-up
-@test size(ens) == (128, 2, length(ts_test)) && all(isfinite, ens)   #src  Pathwise ensemble: shape + finiteness
+@test metrics.traj_rmse < 3.0   ## loose sanity — the field tracks, not a total blow-up #src
+@test size(ens) == (128, 2, length(ts_test)) && all(isfinite, ens)   ## Pathwise ensemble: shape + finiteness #src
 # PULL coverage: Euler drift on a nonlinear oscillator → ~0. Documented PULL limitation.  #src
 @info "Held-out-IC PULL coverage at 90% nominal: $(round(cov90_pull; digits = 3)) (Euler-limited; documented contrast)."  #src
 # Pathwise coverage: single-shooting amplifies field uncertainty → informational.           #src

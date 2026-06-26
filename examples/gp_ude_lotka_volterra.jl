@@ -186,11 +186,11 @@ using Test  #src
 # different OpenBLAS can land a poorer basin; see CLAUDE.md roadmap). So these anti-rot gates assert
 # API/STRUCTURAL invariants that hold on ANY backend (catch shape/dispatch regressions), not exact
 # recovery values — the recovery numbers are reported via @info and shown in the rendered docs.   #src
-@test g.d == 2 && all(isfinite, vec(mean(g, [u0])))   #src  posterior → one multi-output GP, finite mean field
-@test size(sol_gp) == size(target) && all(isfinite, sol_gp)          #src  field integrates to a finite trajectory
+@test g.d == 2 && all(isfinite, vec(mean(g, [u0])))   ## posterior → one multi-output GP, finite mean field #src
+@test size(sol_gp) == size(target) && all(isfinite, sol_gp)   ## field integrates to a finite trajectory #src
 @test all(isfinite, (metrics.traj_rmse, metrics.field_err_visited.median, metrics.field_err_offmanifold.median))  #src
-@test metrics.traj_rmse < 3.0   #src  loose sanity — not a total blow-up (the field tracks, even if a basin is suboptimal)
+@test metrics.traj_rmse < 3.0   ## loose sanity — not a total blow-up (the field tracks, even if a basin is suboptimal) #src
 @info "Held-out-IC PULL coverage (Euler-limited): $(round(cov90_pull; digits = 3))"  #src
-@test size(ens) == (128, 2, length(ts_test)) && all(isfinite, ens)   #src  Pathwise decoupled-sample ensemble: shape + finite
-@test all(isposdef, Σs_path[2:end])                                  #src  per-step moment covariances are valid (PSD)
-@test 0.0 ≤ cov90_path ≤ 1.0    #src  coverage is a valid probability
+@test size(ens) == (128, 2, length(ts_test)) && all(isfinite, ens)   ## Pathwise decoupled-sample ensemble: shape + finite #src
+@test all(isposdef, Σs_path[2:end])   ## per-step moment covariances are valid (PSD) #src
+@test 0.0 ≤ cov90_path ≤ 1.0   ## coverage is a valid probability #src

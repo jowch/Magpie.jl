@@ -201,5 +201,5 @@ using Test  #src
 # off-data spread magnitude) varies with the backend — the robust gate is `flatness_ratio` above,
 # a property of the loss LANDSCAPE (computed with weights fixed), which is training-independent and
 # directly encodes the unidentifiability (flat ridge). The rest are structural/sanity invariants.  #src
-@test all(isfinite, traj_rmses)   #src  every seed produces a FINITE fit (magnitude is BLAS-sensitive — see note above — so no value bound)
-@test isfinite(ferr_spread_ms) && ferr_spread_ms > 0.0          #src  ridge solutions diverge off-data (symptom; magnitude is BLAS-sensitive)
+@test all(isfinite, traj_rmses)   ## every seed produces a FINITE fit (magnitude is BLAS-sensitive — see note above — so no value bound) #src
+@test isfinite(ferr_spread_ms) && ferr_spread_ms > 0.0   ## ridge solutions diverge off-data (symptom; magnitude is BLAS-sensitive) #src

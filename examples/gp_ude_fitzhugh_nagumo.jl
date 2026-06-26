@@ -223,12 +223,12 @@ cov90_pull_res = coverage(truth_vecs, μs_res, Σs_res; level = 0.9)
 using Test  #src
 @info "Residual field error (median) vs zero-GP baseline $(round(zero_gp_baseline; digits = 3)): $(round(residual_err.median; digits = 4)) (ratio $(round(residual_err.median / zero_gp_baseline; digits = 3)))"  #src
 @info "Composite trajectory RMSE (full field: known + GP residual, vs clean truth): $(round(traj_rmse; digits = 4))"  #src
-@test residual_g.d == 2 && all(isfinite, vec(mean(residual_g, [visited_pts[1]])))   #src  posterior → one multi-output residual GP, finite field
-@test isfinite(residual_err.median) && isfinite(traj_rmse)              #src  recovery metrics are finite (no blow-up to NaN/Inf)
-@test size(ens_cf) == (128, 2, length(ts_test)) && all(isfinite, ens_cf)  #src  Pathwise ensemble: shape + finiteness
+@test residual_g.d == 2 && all(isfinite, vec(mean(residual_g, [visited_pts[1]])))   ## posterior → one multi-output residual GP, finite field #src
+@test isfinite(residual_err.median) && isfinite(traj_rmse)   ## recovery metrics are finite (no blow-up to NaN/Inf) #src
+@test size(ens_cf) == (128, 2, length(ts_test)) && all(isfinite, ens_cf)   ## Pathwise ensemble: shape + finiteness #src
 
 if cov90_path >= 0.6  #src
-    @test cov90_path >= 0.6  #src  CompositeField Pathwise covers held-out truth (full field)
+    @test cov90_path >= 0.6   ## CompositeField Pathwise covers held-out truth (full field) #src
 else  #src
     @info "Composite-field Pathwise coverage below 0.6 ($(round(cov90_path; digits = 3))). FHN single-trajectory may under-cover at held-out IC." cov90_path  #src
 end  #src
