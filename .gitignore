@@ -31,7 +31,20 @@ JuliaLocalPreferences.toml
 /scratch/
 
 # superpowers working artifacts (local-only: design specs + implementation plans)
+/docs/superpowers/
 /.superpowers/
 
 # internal research notes (kept local, not part of the public surface)
 /docs/research/
+
+# local planning specs / SDD ledger (not for public repo)
+.superpowers/
+
+# generated example plots (regenerated on docs/example runs)
+*_trajectory*.png
+*_coverage*.png
+*_ridge*.png
+*_divergence*.png
+*_residual*.png
+*_pathwise*.png
+sf_*.png

@@ -1,4 +1,10 @@
 using Test
+using LinearAlgebra
+# Pin single-threaded BLAS: GP-UDE training is multi-basin and ill-conditioned, so BLAS reduction
+# order (thread count, which differs across Julia/OpenBLAS builds) can tip the optimizer into a
+# different basin. Single-threaded removes that one axis; recovery/calibration gates are still
+# written as robust invariants (not BLAS-sensitive exact values). See CLAUDE.md roadmap follow-up.
+BLAS.set_num_threads(1)
 @testset "Magpie" begin
     include("test_validation.jl")
     include("test_spine.jl"); include("test_fit.jl"); include("test_ad.jl")
@@ -10,4 +16,24 @@ using Test
     include("test_saddle.jl")
     include("test_multioutput.jl")
     include("test_ardkernels.jl")
+    include("test_gpude_unit.jl")
+    include("test_gpude_svgp.jl")
+    include("test_eval.jl")
+    include("test_exemplar_B_grad.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_stage1.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_sampled.jl")
+    # Heavy through-solver SVGP calibration/recovery on nonlinear LV (spec §5.5): each test is a
+    # minutes-long Mooncake-compiled training, so it is gated behind a SEPARATE slow flag (same
+    # rationale as the docs-example LV recovery) — out of the default suite to keep it reliable.
+    get(ENV, "MAGPIE_TEST_SCIML_SLOW", "") == "true" && include("test_gpude_sampled_calib.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_guard.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_protocol.jl")
+    # NOTE: the slow LV end-to-end recovery is gated by examples/gp_ude_lotka_volterra.jl's #src
+    # assertion (run in CI's docs-examples job), not a standalone test — see the plan's Stage-1 re-plan.
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_stage2.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_svgp_mo.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_noise.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_pull.jl")
+    get(ENV, "MAGPIE_TEST_SCIML", "") == "true" && include("test_gpude_calibration.jl")
+    # Benchmarks live in bench/ and are run by hand (not CI gates) — see bench/timing_exact_vs_svgp.jl.
 end
