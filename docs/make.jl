@@ -21,8 +21,19 @@ push!(EXAMPLES, ("GP-UDE: identifiability (ridge + off-data divergence)", "gp_ud
 
 isdir(GENDIR) && rm(GENDIR; recursive = true)
 mkpath(GENDIR)
+# The GP-UDE examples are each a real through-solver training (minutes apiece) and are already
+# executed + asserted in the `docs-examples` anti-rot CI jobs. Rendering them as STATIC code blocks
+# here (rather than executed `@example` blocks) keeps the docs build fast — only the cheap Capability-A
+# examples execute — while still publishing their narrative + code. Re-executing them in the docs build
+# would re-run every training sequentially (~35+ min) for no extra verification.
 for (_, src) in EXAMPLES
-    Literate.markdown(joinpath(EXDIR, src), GENDIR; documenter = true)  # markdown only at v0.1
+    if startswith(basename(src), "gp_ude_")
+        # static ```julia blocks — rendered, not executed
+        Literate.markdown(joinpath(EXDIR, src), GENDIR; documenter = true, codefence = "```julia" => "```")
+    else
+        # Capability-A examples: Literate's default executed `@example` blocks (cheap)
+        Literate.markdown(joinpath(EXDIR, src), GENDIR; documenter = true)
+    end
 end
 
 makedocs(
