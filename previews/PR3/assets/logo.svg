@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 210" width="240" height="210" role="img" aria-label="A black-billed magpie following Ariadne's thread, in Julia colors">
+  <title>Magpie.jl</title>
+
+  <!-- Ariadne's thread: one continuous string the magpie follows, beaded with the three Julia dots -->
+  <path d="M 16 196 C 58 188 70 150 116 146 S 176 120 200 86 S 222 60 228 50"
+        fill="none" stroke="#8a8a96" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="116" cy="146" r="8" fill="#9558B2"/>   <!-- Julia purple -->
+  <circle cx="190" cy="98"  r="8" fill="#389826"/>   <!-- Julia green  -->
+  <circle cx="228" cy="50"  r="8" fill="#CB3C33"/>   <!-- Julia red    -->
+
+  <!-- Black-billed magpie: long graduated tail, slim pied body, iridescent blue wing -->
+  <g>
+    <!-- long, thin, fairly straight graduated tail (the magpie signature), trailing down-left -->
+    <path d="M 96 102 C 64 112 34 126 8 140 C 13 144 19 144 26 141 C 56 130 82 118 98 112 Z" fill="#2a2d43"/>
+    <!-- a single understated blue sheen along the tail -->
+    <path d="M 54 122 C 42 127 30 132 18 137 C 22 140 27 140 32 138 C 42 133 52 128 58 125 Z" fill="#3a5a86" opacity="0.65"/>
+
+    <!-- slim, elongated body, tilted up to the right -->
+    <ellipse cx="110" cy="101" rx="36" ry="20" transform="rotate(-16 110 101)" fill="#2a2d43"/>
+    <!-- white belly along the lower front -->
+    <ellipse cx="116" cy="111" rx="21" ry="9" transform="rotate(-16 116 111)" fill="#f4f4f7"/>
+
+    <!-- iridescent blue wing: the near wing folded against the body, swept back toward the tail -->
+    <path d="M 130 88 C 112 86 96 96 92 111 C 104 108 120 104 130 99 C 134 96 134 91 130 88 Z" fill="#4063D8"/>
+    <!-- slim lighter-blue sheen along the leading edge -->
+    <path d="M 124 92 C 110 92 100 99 96 108 C 104 104 116 100 124 97 Z" fill="#6f8bef"/>
+
+    <!-- head (slightly smaller), connected to the body -->
+    <circle cx="149" cy="81" r="13.5" fill="#2a2d43"/>
+    <!-- bill: same plumage navy as the head, organic taper (no outline — it reads from its
+         silhouette in light mode and recedes with the rest of the dark plumage in dark mode) -->
+    <path d="M 156 76 Q 172 77 182 82 Q 170 84 156 86 Z" fill="#2a2d43"/>
+    <!-- eye -->
+    <circle cx="151" cy="79" r="3" fill="#f4f4f7"/>
+    <circle cx="152" cy="79" r="1.5" fill="#15151c"/>
+  </g>
+</svg>
